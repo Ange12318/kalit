@@ -7,25 +7,31 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const db = mysql.createConnection({
+// Créer un pool de connexions
+const pool = mysql.createPool({
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '',
   database: process.env.DB_NAME || 'base_qualite',
-  port: process.env.DB_PORT || 3306
+  port: process.env.DB_PORT || 3306,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
 });
 
-db.connect(err => {
+// Tester la connexion
+pool.getConnection((err, connection) => {
   if (err) {
     console.error('Erreur connexion MySQL:', err);
     process.exit(1);
   }
   console.log('Connecté à MySQL - base_qualite');
+  connection.release();
 });
 
 // === Toutes les routes GET ===
 app.get('/api/exportateurs', (req, res) => {
-  db.query("SELECT ID_EXPORTATEUR as id, RAISONSOCIALE_EXPORTATEUR as nom, MARQUE_EXPORTATEUR as marque FROM exportateurs ORDER BY nom", (err, results) => {
+  pool.query("SELECT ID_EXPORTATEUR as id, RAISONSOCIALE_EXPORTATEUR as nom, MARQUE_EXPORTATEUR as marque FROM exportateurs ORDER BY nom", (err, results) => {
     if (err) {
       console.error("Erreur exportateurs:", err);
       return res.json([]);
@@ -35,7 +41,7 @@ app.get('/api/exportateurs', (req, res) => {
 });
 
 app.get('/api/produits', (req, res) => {
-  db.query("SELECT ID_PRODUIT as id, LIBELLE_PRODUIT as nom FROM produits ORDER BY nom", (err, results) => {
+  pool.query("SELECT ID_PRODUIT as id, LIBELLE_PRODUIT as nom FROM produits ORDER BY nom", (err, results) => {
     if (err) {
       console.error("Erreur produits:", err);
       return res.json([]);
@@ -45,7 +51,7 @@ app.get('/api/produits', (req, res) => {
 });
 
 app.get('/api/campagnes', (req, res) => {
-  db.query("SELECT CAMP_DEMANDE as nom FROM campagne ORDER BY CAMP_DEMANDE DESC", (err, results) => {
+  pool.query("SELECT CAMP_DEMANDE as nom FROM campagne ORDER BY CAMP_DEMANDE DESC", (err, results) => {
     if (err) {
       console.error("Erreur campagnes:", err);
       return res.json([]);
@@ -55,7 +61,7 @@ app.get('/api/campagnes', (req, res) => {
 });
 
 app.get('/api/magasins', (req, res) => {
-  db.query("SELECT ID_MAGASIN as id, NOM_MAGASIN as nom FROM magasins ORDER BY nom", (err, results) => {
+  pool.query("SELECT ID_MAGASIN as id, NOM_MAGASIN as nom FROM magasins ORDER BY nom", (err, results) => {
     if (err) {
       console.error("Erreur magasins:", err);
       return res.json([]);
@@ -66,7 +72,7 @@ app.get('/api/magasins', (req, res) => {
 
 // Route pour récupérer les marques
 app.get('/api/marques', (req, res) => {
-  db.query("SELECT ID_MARQUE as id, LIBELLE_MARQUE as nom FROM marques ORDER BY nom", (err, results) => {
+  pool.query("SELECT ID_MARQUE as id, LIBELLE_MARQUE as nom FROM marques ORDER BY nom", (err, results) => {
     if (err) {
       console.error("Erreur marques:", err);
       return res.json([]);
@@ -75,9 +81,31 @@ app.get('/api/marques', (req, res) => {
   });
 });
 
+// Route pour récupérer les utilisateurs (pour le sondage)
+app.get('/api/utilisateurs', (req, res) => {
+  pool.query(`
+    SELECT 
+      u.ID_UTILISATEURS as id,
+      u.NOM_UTILISATEURS as nom,
+      u.CONTACT_UTILISATEURS as contact,
+      u.LOGIN_UTILISATEURS as login,
+      f.LIBELLE_FONCTIONS as fonction
+    FROM utilisateurs u
+    LEFT JOIN fonctions f ON u.ID_FONCTIONS = f.ID_FONCTIONS
+    WHERE f.LIBELLE_FONCTIONS = 'SONDEUR' OR u.ID_FONCTIONS = 10
+    ORDER BY u.NOM_UTILISATEURS
+  `, (err, results) => {
+    if (err) {
+      console.error("Erreur utilisateurs:", err);
+      return res.json([]);
+    }
+    res.json(results || []);
+  });
+});
+
 // Route grades
 app.get('/api/grades', (req, res) => {
-  db.query(
+  pool.query(
     "SELECT ID_GRADES as id, LIBELLE_GRADES as nom, CATEGORIE as categorie FROM grades ORDER BY nom",
     (err, results) => {
       if (err) {
@@ -91,7 +119,7 @@ app.get('/api/grades', (req, res) => {
 
 // Nouvelle route pour les postes de contrôle
 app.get('/api/postes-controle', (req, res) => {
-  db.query(
+  pool.query(
     "SELECT CODE_POSTE_CONTROLE as code, VILLE_POSTE_CONTROLE as ville, LIBELLE_POSTE_CONTROLE as libelle, RESPONSBLE_POSTE_CONTROLE as responsable, ETAT_POSTE_CONTROLE as etat FROM poste_controle ORDER BY ville",
     (err, results) => {
       if (err) {
@@ -168,7 +196,7 @@ app.get('/api/demandes', (req, res) => {
   }
   
   sql += " ORDER BY d.ID_DEMANDE DESC LIMIT 200";
-  db.query(sql, params, (err, results) => {
+  pool.query(sql, params, (err, results) => {
     if (err) {
       console.error("Erreur recherche demandes:", err);
       return res.json([]);
@@ -180,7 +208,7 @@ app.get('/api/demandes', (req, res) => {
 // Route pour récupérer une demande spécifique (pour modification)
 app.get('/api/demandes/:id', (req, res) => {
   const { id } = req.params;
-  db.query(`
+  pool.query(`
     SELECT 
       d.*, 
       p.LIBELLE_PRODUIT, 
@@ -191,7 +219,7 @@ app.get('/api/demandes/:id', (req, res) => {
     LEFT JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
     LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
     WHERE d.ID_DEMANDE = ?
-  `, [id], (err, results) => { // <-- Correction de la syntaxe
+  `, [id], (err, results) => {
     if (err) {
       console.error("Erreur récupération demande:", err);
       return res.status(500).json({ error: err.message });
@@ -204,7 +232,7 @@ app.get('/api/demandes/:id', (req, res) => {
 // Route pour récupérer les lots d'une demande
 app.get('/api/demandes/:id/lots', (req, res) => {
   const { id } = req.params;
-  db.query(`
+  pool.query(`
     SELECT 
       l.NUM_LOTS as numero, 
       l.NBRESAC_LOTS as nbreSac, 
@@ -254,7 +282,7 @@ app.get('/api/sondage/lots', (req, res) => {
     LEFT JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
     LEFT JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
     LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
-    LEFT JOIN magasins mg ON l.ID_ENTREPOT = mg.ID_MAGASIN
+    LEFT JOIN magasins mg ON l.ID_ENTREPOT = mg.ID_MAGASIN  
     WHERE 1=1
   `;
   
@@ -295,7 +323,7 @@ app.get('/api/sondage/lots', (req, res) => {
   }
   
   sql += " ORDER BY l.ID_LOTS DESC LIMIT 100";
-  db.query(sql, params, (err, results) => {
+  pool.query(sql, params, (err, results) => {
     if (err) {
       console.error("Erreur recherche lots sondage:", err);
       return res.json([]);
@@ -304,81 +332,94 @@ app.get('/api/sondage/lots', (req, res) => {
   });
 });
 
-// Route pour valider la décision de sondage (sans détails)
-app.post('/api/sondage/valider', (req, res) => {
-  const { lotsIds, decision } = req.body;
-  
-  if (!lotsIds || !Array.isArray(lotsIds) || lotsIds.length === 0) {
-    return res.status(400).json({ error: "Liste des lots invalide" });
-  }
-  
-  // On utilise 'OUI'/'NON' pour le champ ETAT_SONDAGE_LOTS dans la table lots
-  const statutSondage = decision === 'Oui' ? 'OUI' : 'NON'; 
-  const placeholders = lotsIds.map(() => '?').join(',');
-  
-  const sql = `UPDATE lots SET ETAT_SONDAGE_LOTS = ? WHERE ID_LOTS IN (${placeholders})`;
-  
-  db.query(sql, [statutSondage, ...lotsIds], (err, result) => {
-    if (err) {
-      console.error("Erreur mise à jour statut sondage:", err);
-      return res.status(500).json({ error: err.message });
-    }
-    
-    res.json({ 
-      success: true, 
-      message: `${result.affectedRows} lot(s) mis à jour avec succès`,
-      statut: statutSondage
-    });
-  });
-});
-
 // ===============================================
 // === Route POST pour l'enregistrement du sondage d'un ou plusieurs lots ===
-// (Correction finale appliquée à CODE_SONDEUR)
 // ===============================================
-app.post('/api/lots/enregistrerSondage', (req, res) => {
+app.post('/api/lots/enregistrerSondage', async (req, res) => {
   const {
     lotIds, // Tableau d'ID des lots sondés
     dateSondage,
-    codeSondeur, // Le code de l'utilisateur qui effectue le sondage
+    codeSondeur,
     observationSondage,
-    decisionSondage, // 'Oui' ou 'Non'
+    decisionSondage,
     nbreEchanSondage,
     poidsTotalSondage,
   } = req.body;
 
   // Fonction pour garantir qu'un champ optionnel est NULL si vide
   const toNullable = (value) => {
-    return (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) ? null : value;
+    if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) {
+        return null;
+    }
+    return value;
   };
 
-  if (!lotIds || lotIds.length === 0 || !dateSondage || !codeSondeur) {
-    return res.status(400).json({ error: "Données manquantes pour l'enregistrement du sondage (lotIds, dateSondage, codeSondeur requis)." });
+  if (!lotIds || lotIds.length === 0) {
+    return res.status(400).json({ error: "Aucun lot sélectionné" });
   }
 
-  // Conversion de la décision pour les deux tables
-  // ETAT_SONDAGE (resgistre_sondage): 1/0
+  // Conversion de la décision
   const etatSondage = decisionSondage === 'Oui' ? 1 : 0;
-  // ETAT_SONDAGE_LOTS (lots): 'OUI'/'NON'
   const statutLot = decisionSondage === 'Oui' ? 'OUI' : 'NON';
-
-  // Application de la fonction de nettoyage pour les champs optionnels (FLOAT/TEXT)
+  
+  // Nettoyage des champs
   const cleanedNbreEchan = toNullable(nbreEchanSondage);
   const cleanedPoidsTotal = toNullable(poidsTotalSondage);
   const cleanedObservation = toNullable(observationSondage);
   
-  // FIX: Application de la fonction de nettoyage à codeSondeur, car c'est un INT (DB)
-  // et pourrait être envoyé comme une chaîne vide malgré la validation initiale.
-  const cleanedCodeSondeur = toNullable(codeSondeur);
+  // Vérifier que le code sondeur existe dans la table utilisateurs si la décision est "Oui"
+  let cleanedCodeSondeur = toNullable(codeSondeur);
+  if (decisionSondage === 'Oui' && cleanedCodeSondeur !== null) {
+      const parsedInt = parseInt(cleanedCodeSondeur);
+      cleanedCodeSondeur = isNaN(parsedInt) ? null : parsedInt;
+      
+      // Vérifier que l'utilisateur existe et est un sondeur
+      if (cleanedCodeSondeur) {
+        try {
+          const userCheck = await new Promise((resolve, reject) => {
+            pool.query(`
+              SELECT u.ID_UTILISATEURS 
+              FROM utilisateurs u
+              LEFT JOIN fonctions f ON u.ID_FONCTIONS = f.ID_FONCTIONS
+              WHERE u.ID_UTILISATEURS = ? 
+              AND (f.LIBELLE_FONCTIONS = 'SONDEUR' OR u.ID_FONCTIONS = 10)
+            `, [cleanedCodeSondeur], (err, results) => {
+              if (err) {
+                reject(err);
+              } else {
+                resolve(results);
+              }
+            });
+          });
+          
+          if (userCheck.length === 0) {
+            return res.status(400).json({ 
+              error: "L'utilisateur sélectionné n'est pas un sondeur valide",
+              codeSondeur: cleanedCodeSondeur
+            });
+          }
+        } catch (err) {
+          console.error("Erreur vérification utilisateur:", err);
+          return res.status(500).json({ error: "Erreur lors de la vérification du sondeur" });
+        }
+      } else {
+        return res.status(400).json({ error: "Un sondeur valide doit être sélectionné pour le sondage" });
+      }
+  } else if (decisionSondage === 'Oui') {
+    return res.status(400).json({ error: "Un sondeur doit être sélectionné pour le sondage" });
+  }
 
+  // Date par défaut si non fournie
+  const cleanedDateSondage = dateSondage || new Date().toISOString().slice(0, 19).replace('T', ' ');
 
-  // Utilisation d'une transaction pour garantir l'atomicité
-  db.getConnection((err, connection) => {
+  // Obtenir une connexion du pool pour la transaction
+  pool.getConnection(async (err, connection) => {
     if (err) {
-      console.error("ERREUR CRITIQUE DE CONNEXION DB:", err);
+      console.error("ERREUR DE CONNEXION:", err);
       return res.status(500).json({ error: "Erreur de connexion à la base de données." });
     }
 
+    // Démarrer la transaction
     connection.beginTransaction(async (err) => {
       if (err) {
         connection.release();
@@ -387,88 +428,143 @@ app.post('/api/lots/enregistrerSondage', (req, res) => {
       }
 
       try {
-        const lotOperations = lotIds.map(idLot => {
-          return new Promise((resolve, reject) => {
-            // 1. Mise à jour de l'ETAT_SONDAGE_LOTS dans la table lots
-            const sqlUpdateLot = "UPDATE lots SET ETAT_SONDAGE_LOTS = ? WHERE ID_LOTS = ?";
-            
-            connection.query(sqlUpdateLot, [statutLot, idLot], (err) => {
-              if (err) return reject(err);
-              
-              // 2. Insertion dans la table resgistre_sondage
-              const sqlInsertSondage = `
-                INSERT INTO resgistre_sondage 
-                (ID_LOT, DATE_SONDAGE_LOT, CODE_SONDEUR_SONDAGE, OBSERVATION_SONDAGE, ETAT_SONDAGE, NBRE_ECHAN_SONDAGE, POIDS_TOTAL_SONDAGE) 
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-              `;
-              const values = [
-                idLot,
-                dateSondage,
-                cleanedCodeSondeur, // UTILISATION DE LA VALEUR NETTOYÉE
-                cleanedObservation,
-                etatSondage,
-                cleanedNbreEchan,
-                cleanedPoidsTotal
-              ];
-
-              // LOG DE DÉBOGAGE DES VALEURS AVANT INSERTION
-              console.log(`[DEBUG] Insertion Lot ${idLot}. Valeurs:`, values);
-
-              connection.query(sqlInsertSondage, values, (err) => {
-                if (err) {
-                    // LOG DE DÉBOGAGE DE L'ERREUR D'INSERTION
-                    console.error(`[ERREUR INSERTION resgistre_sondage pour Lot ${idLot}]`, err);
-                    return reject(err);
-                }
+        // Mise à jour des lots et insertion dans resgistre_sondage
+        for (const idLot of lotIds) {
+          // 1. Mise à jour de l'ETAT_SONDAGE_LOTS dans la table lots
+          const updateLotQuery = "UPDATE lots SET ETAT_SONDAGE_LOTS = ? WHERE ID_LOTS = ?";
+          await new Promise((resolve, reject) => {
+            connection.query(updateLotQuery, [statutLot, idLot], (err) => {
+              if (err) {
+                console.error(`Erreur mise à jour lot ${idLot}:`, err);
+                reject(err);
+              } else {
                 resolve();
-              });
+              }
             });
           });
-        });
+          
+          // 2. Insertion dans resgistre_sondage UNIQUEMENT si la décision est 'Oui' (Sondé)
+          if (etatSondage === 1) {
+            const insertSondageQuery = `
+              INSERT INTO resgistre_sondage 
+              (ID_LOT, DATE_SONDAGE_LOT, CODE_SONDEUR_SONDAGE, OBSERVATION_SONDAGE, 
+               ETAT_SONDAGE, NBRE_ECHAN_SONDAGE, POIDS_TOTAL_SONDAGE) 
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+            `;
+            const values = [
+              idLot,
+              cleanedDateSondage,
+              cleanedCodeSondeur,
+              cleanedObservation,
+              etatSondage,
+              cleanedNbreEchan,
+              cleanedPoidsTotal
+            ];
+            
+            await new Promise((resolve, reject) => {
+              connection.query(insertSondageQuery, values, (err, result) => {
+                if (err) {
+                  console.error(`[ERREUR INSERTION resgistre_sondage pour Lot ${idLot}]`, err);
+                  reject(err);
+                } else {
+                  console.log(`Lot ${idLot} enregistré dans resgistre_sondage, ID: ${result.insertId}`);
+                  resolve();
+                }
+              });
+            });
+          } else {
+            console.log(`Lot ${idLot} marqué comme NON sondé`);
+          }
+        }
 
-        // Exécuter toutes les opérations
-        await Promise.all(lotOperations);
-
-        // Si tout est OK, commiter la transaction
-        connection.commit(err => {
+        // Commit de la transaction
+        connection.commit((err) => {
           if (err) {
             return connection.rollback(() => {
               connection.release();
-              throw err;
+              console.error("ERREUR COMMIT:", err);
+              res.status(500).json({ error: "Échec de l'enregistrement. Erreur: " + err.message });
             });
           }
+          
           connection.release();
-          console.log(`Sondage enregistré et lots mis à jour pour ${lotIds.length} lot(s).`);
-          res.json({ success: true, message: `Sondage enregistré pour ${lotIds.length} lot(s).` });
+          
+          // Message selon la décision
+          const message = decisionSondage === 'Oui' 
+            ? `${lotIds.length} lot(s) sondé(s) et enregistré(s) dans le registre de sondage` 
+            : `${lotIds.length} lot(s) marqué(s) comme non sondé(s)`;
+          
+          res.json({ 
+            success: true, 
+            message: message,
+            lotsTraites: lotIds.length,
+            decision: decisionSondage
+          });
         });
-
       } catch (error) {
-        // CE BLOC EST EXÉCUTÉ SI UNE ERREUR SQL SE PRODUIT
-        console.error("ERREUR LORS DE L'OPÉRATION D'ENREGISTREMENT DU SONDAGE (ROLLBACK):", error);
+        // Rollback en cas d'erreur
         connection.rollback(() => {
           connection.release();
-          // Retourne l'erreur à l'utilisateur pour le débogage
-          res.status(500).json({ error: "Échec de l'enregistrement du sondage. Erreur DB: " + error.message });
+          console.error("ERREUR LORS DE L'OPÉRATION:", error);
+          res.status(500).json({ 
+            error: "Échec de l'enregistrement du sondage", 
+            details: error.message 
+          });
         });
       }
     });
   });
 });
+
+// Route pour valider la décision de sondage (version simplifiée)
+app.post('/api/sondage/valider', (req, res) => {
+  const { lotsIds, decision } = req.body;
+  
+  if (!lotsIds || !Array.isArray(lotsIds) || lotsIds.length === 0) {
+    return res.status(400).json({ error: "Liste des lots invalide" });
+  }
+  
+  // Préparer les données pour l'enregistrement complet
+  const sondageData = {
+    lotIds: lotsIds,
+    dateSondage: new Date().toISOString().slice(0, 19).replace('T', ' '),
+    codeSondeur: null,
+    observationSondage: `Sondage validé le ${new Date().toLocaleDateString('fr-FR')}`,
+    decisionSondage: decision,
+    nbreEchanSondage: 10,
+    poidsTotalSondage: 100
+  };
+  
+  // Appeler directement la route d'enregistrement
+  req.body = sondageData;
+  
+  // Trouver et appeler la route /api/lots/enregistrerSondage
+  const routeHandler = app._router.stack.find(layer => 
+    layer.route && layer.route.path === '/api/lots/enregistrerSondage'
+  );
+  
+  if (routeHandler && routeHandler.route.stack[0].handle) {
+    return routeHandler.route.stack[0].handle(req, res);
+  } else {
+    // Fallback : appeler directement la fonction
+    return app.post('/api/lots/enregistrerSondage', req, res);
+  }
+});
+
 // Route pour supprimer une demande
 app.delete('/api/demandes/:id', (req, res) => {
   const { id } = req.params;
   
   // D'abord supprimer les lots associés
-  db.query('DELETE FROM lots WHERE ID_DEMANDE = ?', [id], (err) => {
+  pool.query('DELETE FROM lots WHERE ID_DEMANDE = ?', [id], (err) => {
     if (err) {
       console.error("Erreur suppression lots:", err);
       return res.status(500).json({ error: err.message });
     }
     
     // Puis supprimer la demande
-    db.query('DELETE FROM demandes WHERE ID_DEMANDE = ?', [id], (err, result) => {
-      if 
-      (err) {
+    pool.query('DELETE FROM demandes WHERE ID_DEMANDE = ?', [id], (err, result) => {
+      if (err) {
         console.error("Erreur suppression demande:", err);
         return res.status(500).json({ error: err.message });
       }
@@ -487,172 +583,185 @@ app.put('/api/demandes/:id', (req, res) => {
   }
 
   // Commencer une transaction
-  db.beginTransaction(err => {
+  pool.getConnection((err, connection) => {
     if (err) {
-      console.error("Erreur début transaction:", err);
+      console.error("Erreur connexion:", err);
       return res.status(500).json({ error: err.message });
     }
 
-    // Mettre à jour la demande
-    const sqlUpdateDemande = `
-      UPDATE demandes SET
-        REF_DEMANDE = ?, 
-        AUT_DEMANDE = ?, 
-        DATEEMI_DEMANDE = ?, 
-        DATEREC_DEMANDE = ?,
-        CAMP_DEMANDE = ?, 
-        ID_PRODUIT = ?, 
-        ID_EXPORTATEUR = ?, 
-        NBRELOT_DEMANDE = ?, 
-        POIDS_DEMANDE = ?,
-        NATURE_DEMANDE = ?, 
-        DATE_EXPIR_DEMANDE = ?
-      WHERE ID_DEMANDE = ?
-    `;
-
-    db.query(sqlUpdateDemande, [
-      b.refDemande,
-      b.autDemande || '',
-      b.dateEmission || null,
-      b.dateReception || b.dateEmission || null,
-      b.campagne,
-      b.produit,
-      b.exportateur,
-      b.nbreLots || 0,
-      b.poidsTotal || 0,
-      b.natureDemande || 'Nouveau lots',
-      b.dateExpiration || null,
-      id
-    ], (err, result) => {
+    connection.beginTransaction(err => {
       if (err) {
-        return db.rollback(() => {
-          console.error("Erreur mise à jour demande:", err);
-          res.status(500).json({ error: err.message });
-        });
+        connection.release();
+        console.error("Erreur début transaction:", err);
+        return res.status(500).json({ error: err.message });
       }
 
-      // Supprimer les anciens lots
-      db.query('DELETE FROM lots WHERE ID_DEMANDE = ?', [id], err => {
+      // Mettre à jour la demande
+      const sqlUpdateDemande = `
+        UPDATE demandes SET
+          REF_DEMANDE = ?, 
+          AUT_DEMANDE = ?, 
+          DATEEMI_DEMANDE = ?, 
+          DATEREC_DEMANDE = ?,
+          CAMP_DEMANDE = ?, 
+          ID_PRODUIT = ?, 
+          ID_EXPORTATEUR = ?, 
+          NBRELOT_DEMANDE = ?, 
+          POIDS_DEMANDE = ?,
+          NATURE_DEMANDE = ?, 
+          DATE_EXPIR_DEMANDE = ?
+        WHERE ID_DEMANDE = ?
+      `;
+
+      connection.query(sqlUpdateDemande, [
+        b.refDemande,
+        b.autDemande || '',
+        b.dateEmission || null,
+        b.dateReception || b.dateEmission || null,
+        b.campagne,
+        b.produit,
+        b.exportateur,
+        b.nbreLots || 0,
+        b.poidsTotal || 0,
+        b.natureDemande || 'Nouveau lots',
+        b.dateExpiration || null,
+        id
+      ], (err, result) => {
         if (err) {
-          return db.rollback(() => {
-            console.error("Erreur suppression anciens lots:", err);
+          return connection.rollback(() => {
+            connection.release();
+            console.error("Erreur mise à jour demande:", err);
             res.status(500).json({ error: err.message });
           });
         }
 
-        // Insérer les nouveaux lots
-        if (b.lots && b.lots.length > 0) {
-          const lotPromises = b.lots.map(lot => {
-            return new Promise((resolve, reject) => {
-              let entrepotId = null;
-              let marqueId = null;
+        // Supprimer les anciens lots
+        connection.query('DELETE FROM lots WHERE ID_DEMANDE = ?', [id], err => {
+          if (err) {
+            return connection.rollback(() => {
+              connection.release();
+              console.error("Erreur suppression anciens lots:", err);
+              res.status(500).json({ error: err.message });
+            });
+          }
 
-              const getEntrepotId = () => {
-                return new Promise((resolveEntrepot) => {
-                  if (lot.magasin) {
-                    db.query('SELECT ID_MAGASIN FROM magasins WHERE NOM_MAGASIN = ?', [lot.magasin], (err, results) => {
-                      if (err) {
-                        console.error("Erreur recherche magasin:", err);
-                      }
-                      if (!err && results.length > 0) {
-                        entrepotId = results[0].ID_MAGASIN;
-                      }
+          // Insérer les nouveaux lots
+          if (b.lots && b.lots.length > 0) {
+            const lotPromises = b.lots.map(lot => {
+              return new Promise((resolve, reject) => {
+                let entrepotId = null;
+                let marqueId = null;
+
+                const getEntrepotId = () => {
+                  return new Promise((resolveEntrepot) => {
+                    if (lot.magasin) {
+                      connection.query('SELECT ID_MAGASIN FROM magasins WHERE NOM_MAGASIN = ?', [lot.magasin], (err, results) => {
+                        if (err) {
+                          console.error("Erreur recherche magasin:", err);
+                        }
+                        if (!err && results.length > 0) {
+                          entrepotId = results[0].ID_MAGASIN;
+                        }
+                        resolveEntrepot();
+                      });
+                    } else {
                       resolveEntrepot();
-                    });
-                  } else {
-                    resolveEntrepot();
-                  }
-                });
-              };
-              const getMarqueId = () => {
-                return new Promise((resolveMarque) => {
-                  if (lot.marque) {
-                    db.query('SELECT ID_MARQUE FROM marques WHERE LIBELLE_MARQUE = ?', [lot.marque], (err, results) => {
-                      if 
-                      (err) {
-                        console.error("Erreur recherche marque:", err);
-                      }
-                      if (!err && results.length > 0) {
-                        marqueId = results[0].ID_MARQUE;
-                      }
-                      resolveMarque();
-                    });
-                  } else {
-                    resolveMarque();
-                  }
-                });
-              };
-
-              const insererLot = () => {
-                const sqlLot = `
-                  INSERT INTO lots (
-                    NUM_LOTS, NBRESAC_LOTS, POIDS_LOTS, RECOLTE_LOTS, ORIGINE_LOTS,
-                    ID_GRADE, ID_ENTREPOT, ID_MARQUE, ID_DEMANDE, ANALYSE_LOTS,
-                    ETAPE_TRAITEMENT_LOTS, ETAT_LOTS, ETAT_CODIFICATION_LOTS, ETAT_SONDAGE_LOTS, ETAT_BRASSAGE,
-                    STATUT_LOTS
-                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NON', 1, 'NON', 'NON', 'NON', ?)
-                `;
-                db.query(sqlLot, [
-                  lot.numero || '',
-                  lot.nbreSacs || 0,
-                  lot.poids || 0,
-                  lot.recolte || null,
-                  null, 
-                  // origine
-                  lot.qualite || null,
-                  entrepotId, // ID_ENTREPOT
-                  marqueId,
-                  id,
-                  0, // analyse_lots
-                  lot.parite || '1' // STATUT_LOTS pour la parité
-                ], (err) => {
-                  if (err) {
-                    console.error("Erreur insertion lot:", err);
-                    reject(err);
-                  } else {
-                    resolve();
-                  }
-                });
-              };
-
-              // Exécuter en séquence
-              getEntrepotId()
-                .then(() => getMarqueId())
-                .then(() => insererLot())
-                .catch(reject);
-            });
-          });
-
-          Promise.all(lotPromises)
-            .then(() => {
-              db.commit(err => {
-                if (err) {
-                  return db.rollback(() => {
-                    console.error("Erreur commit:", err);
-                    res.status(500).json({ error: err.message });
+                    }
                   });
-                }
-                res.json({ success: true, message: 'Demande modifiée avec succès' });
-              });
-            })
-            .catch(error => {
-              return db.rollback(() => {
-                console.error("Erreur insertion nouveaux lots:", error);
-                res.status(500).json({ error: error.message });
+                };
+
+                const getMarqueId = () => {
+                  return new Promise((resolveMarque) => {
+                    if (lot.marque) {
+                      connection.query('SELECT ID_MARQUE FROM marques WHERE LIBELLE_MARQUE = ?', [lot.marque], (err, results) => {
+                        if (err) {
+                          console.error("Erreur recherche marque:", err);
+                        }
+                        if (!err && results.length > 0) {
+                          marqueId = results[0].ID_MARQUE;
+                        }
+                        resolveMarque();
+                      });
+                    } else {
+                      resolveMarque();
+                    }
+                  });
+                };
+
+                const insererLot = () => {
+                  const sqlLot = `
+                    INSERT INTO lots (
+                      NUM_LOTS, NBRESAC_LOTS, POIDS_LOTS, RECOLTE_LOTS, ORIGINE_LOTS,
+                      ID_GRADE, ID_ENTREPOT, ID_MARQUE, ID_DEMANDE, ANALYSE_LOTS,
+                      ETAPE_TRAITEMENT_LOTS, ETAT_LOTS, ETAT_CODIFICATION_LOTS, ETAT_SONDAGE_LOTS, ETAT_BRASSAGE,
+                      STATUT_LOTS
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NON', 1, 'NON', 'NON', 'NON', ?)
+                  `;
+                  connection.query(sqlLot, [
+                    lot.numero || '',
+                    lot.nbreSacs || 0,
+                    lot.poids || 0,
+                    lot.recolte || null,
+                    null,
+                    lot.qualite || null,
+                    entrepotId,
+                    marqueId,
+                    id,
+                    0,
+                    lot.parite || '1'
+                  ], (err) => {
+                    if (err) {
+                      console.error("Erreur insertion lot:", err);
+                      reject(err);
+                    } else {
+                      resolve();
+                    }
+                  });
+                };
+
+                getEntrepotId()
+                  .then(() => getMarqueId())
+                  .then(() => insererLot())
+                  .catch(reject);
               });
             });
-        } else {
-          // Commit si pas de lots
-          db.commit(err => {
-            if (err) {
-              return db.rollback(() => {
-                console.error("Erreur commit:", err);
-                res.status(500).json({ error: err.message });
+
+            Promise.all(lotPromises)
+              .then(() => {
+                connection.commit(err => {
+                  if (err) {
+                    return connection.rollback(() => {
+                      connection.release();
+                      console.error("Erreur commit:", err);
+                      res.status(500).json({ error: err.message });
+                    });
+                  }
+                  connection.release();
+                  res.json({ success: true, message: 'Demande modifiée avec succès' });
+                });
+              })
+              .catch(error => {
+                return connection.rollback(() => {
+                  connection.release();
+                  console.error("Erreur insertion nouveaux lots:", error);
+                  res.status(500).json({ error: error.message });
+                });
               });
-            }
-            res.json({ success: true, message: 'Demande modifiée avec succès' });
-          });
-        }
+          } else {
+            // Commit si pas de lots
+            connection.commit(err => {
+              if (err) {
+                return connection.rollback(() => {
+                  connection.release();
+                  console.error("Erreur commit:", err);
+                  res.status(500).json({ error: err.message });
+                });
+              }
+              connection.release();
+              res.json({ success: true, message: 'Demande modifiée avec succès' });
+            });
+          }
+        });
       });
     });
   });
@@ -674,7 +783,7 @@ app.post('/api/demandes', (req, res) => {
     ) VALUES (?, ?, 'TYPE-A', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'En attente')
   `;
 
-  db.query(sqlDemande, [
+  pool.query(sqlDemande, [
     b.refDemande,
     b.autDemande || '',
     b.dateEmission || null,
@@ -703,10 +812,9 @@ app.post('/api/demandes', (req, res) => {
           let marqueId = null;
 
           const getEntrepotId = () => {
-            return new Promise((resolveEntrepot) => 
-            {
+            return new Promise((resolveEntrepot) => {
               if (lot.magasin) {
-                db.query('SELECT ID_MAGASIN FROM magasins WHERE NOM_MAGASIN = ?', [lot.magasin], (err, results) => {
+                pool.query('SELECT ID_MAGASIN FROM magasins WHERE NOM_MAGASIN = ?', [lot.magasin], (err, results) => {
                   if (err) {
                     console.error("Erreur recherche magasin:", err);
                   }
@@ -723,10 +831,11 @@ app.post('/api/demandes', (req, res) => {
               }
             });
           };
+
           const getMarqueId = () => {
             return new Promise((resolveMarque) => {
               if (lot.marque) {
-                db.query('SELECT ID_MARQUE FROM marques WHERE LIBELLE_MARQUE = ?', [lot.marque], (err, results) => {
+                pool.query('SELECT ID_MARQUE FROM marques WHERE LIBELLE_MARQUE = ?', [lot.marque], (err, results) => {
                   if (err) {
                     console.error("Erreur recherche marque:", err);
                   }
@@ -758,17 +867,17 @@ app.post('/api/demandes', (req, res) => {
               lot.nbreSacs || 0,
               lot.poids || 0,
               lot.recolte || null,
-              null, // origine
+              null,
               lot.qualite || null,
-              entrepotId, // ID_ENTREPOT (qui stocke l'ID du magasin)
+              entrepotId,
               marqueId,
               demandeId,
-              0, // analyse_lots
-              lot.parite || '1' // STATUT_LOTS pour la parité
+              0,
+              lot.parite || '1'
             ];
             console.log(`Insertion lot:`, values);
 
-            db.query(sqlLot, values, (err) => {
+            pool.query(sqlLot, values, (err) => {
               if (err) {
                 console.error("Erreur insertion lot:", err);
                 reject(err);
@@ -779,7 +888,6 @@ app.post('/api/demandes', (req, res) => {
             });
           };
 
-          // Exécuter en séquence
           getEntrepotId()
             .then(() => getMarqueId())
             .then(() => insererLot())

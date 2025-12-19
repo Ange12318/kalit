@@ -31,6 +31,8 @@ const SondageLots: React.FC<SondageLotsProps> = ({ onNavigateBack }) => {
   const [selectedLots, setSelectedLots] = useState<number[]>([]);
   const [loading, setLoading] = useState(false);
   const [decisionSondage, setDecisionSondage] = useState('Oui');
+  const [utilisateurs, setUtilisateurs] = useState<any[]>([]);
+  const [codeSondeur, setCodeSondeur] = useState<string>('');
 
   // Date du jour par défaut
   const today = new Date().toISOString().split('T')[0];
@@ -61,14 +63,22 @@ const SondageLots: React.FC<SondageLotsProps> = ({ onNavigateBack }) => {
     // Charger les listes déroulantes
     const fetchSelects = async () => {
       try {
-        const [expRes, prodRes] = await Promise.all([
+        const [expRes, prodRes, usersRes] = await Promise.all([
           fetch('http://localhost:5000/api/exportateurs'),
-          fetch('http://localhost:5000/api/produits')
+          fetch('http://localhost:5000/api/produits'),
+          fetch('http://localhost:5000/api/utilisateurs')
         ]);
         const exportateursData = await expRes.json();
         const produitsData = await prodRes.json();
+        const utilisateursData = await usersRes.json();
         setExportateurs(exportateursData);
         setProduits(produitsData);
+        setUtilisateurs(utilisateursData);
+        
+        // Sélectionner le premier utilisateur par défaut si disponible
+        if (utilisateursData.length > 0) {
+          setCodeSondeur(utilisateursData[0].id.toString());
+        }
       } catch (err) {
         console.error('Erreur chargement des listes:', err);
       }
@@ -137,27 +147,41 @@ const SondageLots: React.FC<SondageLotsProps> = ({ onNavigateBack }) => {
       return;
     }
 
+    // Vérifier qu'un code sondeur est sélectionné si la décision est "Oui"
+    if (decisionSondage === 'Oui' && !codeSondeur) {
+      alert('Veuillez sélectionner un sondeur');
+      return;
+    }
+
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:5000/api/sondage/valider', {
+      // Utiliser l'endpoint d'enregistrement complet
+      const res = await fetch('http://localhost:5000/api/lots/enregistrerSondage', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          lotsIds: selectedLots,
-          decision: decisionSondage
+          lotIds: selectedLots,
+          dateSondage: new Date().toISOString().slice(0, 19).replace('T', ' '),
+          codeSondeur: decisionSondage === 'Oui' ? codeSondeur : null,
+          observationSondage: `Sondage effectué le ${new Date().toLocaleDateString('fr-FR')}`,
+          decisionSondage: decisionSondage,
+          nbreEchanSondage: 10,
+          poidsTotalSondage: 100
         })
       });
 
+      const result = await res.json();
+      
       if (res.ok) {
-        alert(`${selectedLots.length} lot(s) marqué(s) comme "${decisionSondage === 'Oui' ? 'Sondé' : 'Non sondé'}"`);
-        rechercherLots(); // Recharger la liste
+        alert(`${selectedLots.length} lot(s) ${decisionSondage === 'Oui' ? 'sondé(s) et enregistré(s) dans le registre' : 'marqué(s) comme non sondé(s)'}`);
+        rechercherLots();
         setSelectedLots([]);
       } else {
-        alert('Erreur lors de la validation');
+        alert(`Erreur: ${result.error || 'L\'enregistrement a échoué'}`);
       }
     } catch (err) {
-      console.error('Erreur validation sondage:', err);
-      alert('Erreur réseau');
+      console.error('Erreur enregistrement sondage:', err);
+      alert('Erreur réseau lors de l\'enregistrement');
     }
     setLoading(false);
   };
@@ -400,7 +424,8 @@ const SondageLots: React.FC<SondageLotsProps> = ({ onNavigateBack }) => {
               </span>
             )}
           </h3>
-          <div className="flex items-end gap-6">
+          
+          <div className="flex flex-col md:flex-row md:items-end gap-4">
             <div className="space-y-1 w-64">
               <label className="font-medium text-gray-600">Sonder ?</label>
               <select 
@@ -408,24 +433,50 @@ const SondageLots: React.FC<SondageLotsProps> = ({ onNavigateBack }) => {
                 value={decisionSondage}
                 onChange={e => setDecisionSondage(e.target.value)}
               >
-                <option value="Oui">Oui</option>
-                <option value="Non">Non</option>
+                <option value="Oui">Oui (enregistre dans le registre)</option>
+                <option value="Non">Non (marque simplement comme non sondé)</option>
               </select>
             </div>
+            
+            {decisionSondage === 'Oui' && (
+              <div className="space-y-1 w-64">
+                <label className="font-medium text-gray-600">Sondeur *</label>
+                <select 
+                  className="w-full form-select"
+                  value={codeSondeur}
+                  onChange={e => setCodeSondeur(e.target.value)}
+                  required
+                >
+                  <option value="">Sélectionner un sondeur</option>
+                  {utilisateurs.map(user => (
+                    <option key={user.id} value={user.id}>
+                      {user.nom} {user.fonction ? `(${user.fonction})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            
             <button 
               onClick={validerDecisionSondage}
-              disabled={selectedLots.length === 0 || loading}
+              disabled={selectedLots.length === 0 || loading || (decisionSondage === 'Oui' && !codeSondeur)}
               className={`${
-                selectedLots.length > 0 && !loading 
+                selectedLots.length > 0 && !loading && !(decisionSondage === 'Oui' && !codeSondeur)
                   ? 'bg-green-600 hover:bg-green-700' 
                   : 'bg-gray-400 cursor-not-allowed'
               } text-white font-bold py-2 px-6 rounded-lg shadow-md transition-colors flex items-center gap-2`}
             >
               <ValidationIcon className="h-5 w-5"/>
               <span>
-                {loading ? 'Validation...' : `Valider la Décision (${selectedLots.length})`}
+                {loading ? 'Enregistrement...' : `Valider (${selectedLots.length} lot(s))`}
               </span>
             </button>
+          </div>
+          
+          <div className="mt-3 text-sm text-gray-600">
+            <strong>Note :</strong> {decisionSondage === 'Oui' 
+              ? 'Un sondeur valide doit être sélectionné pour l\'enregistrement dans le registre.' 
+              : 'Les lots seront seulement marqués comme non sondés.'}
           </div>
         </div>
         
