@@ -20,7 +20,7 @@ const NouvelleDemande: React.FC<{ onNavigateBack: () => void }> = ({ onNavigateB
   const [nature, setNature] = useState('');
   const [exportateurId, setExportateurId] = useState('');
   const [produitId, setProduitId] = useState('');
-  const [ville, setVille] = useState('ABIDJAN');
+  const [ville, setVille] = useState('');
   const [campagne, setCampagne] = useState('');
   const [dateAutorisation, setDateAutorisation] = useState(today);
   const [dateValidation, setDateValidation] = useState(today);
@@ -180,30 +180,31 @@ const NouvelleDemande: React.FC<{ onNavigateBack: () => void }> = ({ onNavigateB
     setLoading(true);
     try {
       const payload = {
-        refDemande: reference.trim(),
-        autDemande: autorisation.trim(),
-        typeDemande: 'TYPE-A',
-        dateEmission: dateAutorisation,
-        dateReception: dateAutorisation,
-        campagne,
-        produit: produitId,
-        exportateur: Number(exportateurId),
-        nbreLots: totalLots,
-        poidsTotal: Number(totalPoidsNet.toFixed(3)),
-        natureDemande: nature || 'Nouveau lots',
-        naturePrestation: 'PREST01',
-        dateExpiration: dateValidation,
-        lots: lots.filter(l => l.numero?.trim()).map(l => ({
-          numero: l.numero.trim(),
-          nbreSacs: Number(l.nbreSac) || 0,
-          poids: Number(l.poidsNet) || 0,
-          recolte: l.recolte,
-          qualite: l.qualite || null,
-          marque: l.marque || null,
-          magasin: l.magasin || null,
-          parite: l.parite || null,
-        })),
-      };
+  refDemande: reference.trim(),
+  autDemande: autorisation.trim(),
+  typeDemande: 'TYPE-A',
+  dateEmission: dateAutorisation,
+  dateReception: dateAutorisation,
+  campagne,
+  produit: produitId,
+  exportateur: Number(exportateurId),
+  nbreLots: totalLots,
+  poidsTotal: Number(totalPoidsNet.toFixed(3)),
+  natureDemande: nature || 'Nouveau lots',
+  naturePrestation: 'PREST01',
+  dateExpiration: dateValidation,
+  ville: ville, // ← Ajoutez cette ligne
+  lots: lots.filter(l => l.numero?.trim()).map(l => ({
+    numero: l.numero.trim(),
+    nbreSacs: Number(l.nbreSac) || 0,
+    poids: Number(l.poidsNet) || 0,
+    recolte: l.recolte,
+    qualite: l.qualite || null,
+    marque: l.marque || null,
+    magasin: l.magasin || null,
+    parite: l.parite || null,
+  })),
+};
 
       const res = await fetch('http://localhost:5000/api/demandes', {
         method: 'POST',

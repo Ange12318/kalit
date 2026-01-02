@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {
   BackArrowIcon, CalendarIcon, SearchIcon, ValidationIcon, PrintIcon,
-  BoxIcon, KeyIcon, QuestionMarkCircleIcon, RefreshIcon, SparklesIcon
+  BoxIcon, KeyIcon, QuestionMarkCircleIcon, RefreshIcon, SparklesIcon,
+  FilterIcon, 
 } from './Icons';
 
 interface Lot {
@@ -27,6 +28,7 @@ interface CodeSecret {
   LIBELLE_CODIFICATION: string;
   NUM_LOTS: string;
   LIBELLE_PRODUIT: string;
+  exportateur: string;
 }
 
 interface LotsACodifierProps {
@@ -43,9 +45,12 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
   const [lots, setLots] = useState<Lot[]>([]);
   const [selectedLots, setSelectedLots] = useState<number[]>([]);
   const [codesSecrets, setCodesSecrets] = useState<CodeSecret[]>([]);
+  const [filteredCodesSecrets, setFilteredCodesSecrets] = useState<CodeSecret[]>([]);
   const [loading, setLoading] = useState(false);
   const [generatingCodes, setGeneratingCodes] = useState(false);
+  const [generatingReprises, setGeneratingReprises] = useState(false);
   const [printLoading, setPrintLoading] = useState(false);
+  const [showOnlySelectedCodes, setShowOnlySelectedCodes] = useState(false);
 
   // Filtres
   const [filters, setFilters] = useState({
@@ -83,6 +88,27 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
     fetchSelects();
   }, []);
 
+  // Filtrer les codes secrets en fonction de la sélection
+  useEffect(() => {
+    if (showOnlySelectedCodes && selectedLots.length > 0) {
+      // Filtrer les codes pour n'afficher que ceux des lots sélectionnés
+      const filtered = codesSecrets.filter(code => {
+        // Trouver le lot correspondant au code
+        const correspondingLot = lots.find(lot => lot.NUM_LOTS === code.NUM_LOTS);
+        return correspondingLot && selectedLots.includes(correspondingLot.ID_LOTS);
+      });
+      setFilteredCodesSecrets(filtered);
+    } else {
+      // Afficher uniquement les codes générés aujourd'hui
+      const today = new Date().toISOString().split('T')[0];
+      const todayCodes = codesSecrets.filter(code => {
+        const codeDate = new Date(code.DATE_ENREG_CODIFICATION).toISOString().split('T')[0];
+        return codeDate === today;
+      });
+      setFilteredCodesSecrets(todayCodes);
+    }
+  }, [showOnlySelectedCodes, selectedLots, codesSecrets, lots]);
+
   // Rechercher les lots SONDÉS uniquement
   const rechercherLotsSondes = async () => {
     setLoading(true);
@@ -101,6 +127,7 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
       const res = await fetch(`http://localhost:5000/api/sondage/lots?${params}`);
       const data = await res.json();
       
+      // Filtrer uniquement les lots sondés (ETAT_SONDAGE_LOTS = 'OUI')
       const lotsSondes = data.filter((lot: Lot) => lot.ETAT_SONDAGE_LOTS === 'OUI');
       setLots(lotsSondes);
       setSelectedLots([]);
@@ -114,12 +141,29 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
     setLoading(false);
   };
 
-  // Charger les codes secrets
+  // Charger les codes secrets (uniquement ceux d'aujourd'hui par défaut)
   const chargerCodesSecrets = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/codes-secrets');
+      let url = 'http://localhost:5000/api/codes-secrets';
+      
+      // Si on veut filtrer par lots sélectionnés
+      if (showOnlySelectedCodes && selectedLots.length > 0) {
+        const lotIdsParam = selectedLots.join(',');
+        url = `http://localhost:5000/api/codes-secrets?lotIds=${lotIdsParam}`;
+      }
+      
+      const res = await fetch(url);
       const data = await res.json();
-      setCodesSecrets(data);
+      
+      // Filtrer pour n'afficher que les codes d'aujourd'hui par défaut
+      const today = new Date().toISOString().split('T')[0];
+      const todayCodes = data.filter((code: CodeSecret) => {
+        const codeDate = new Date(code.DATE_ENREG_CODIFICATION).toISOString().split('T')[0];
+        return codeDate === today;
+      });
+      
+      setCodesSecrets(data); // Stocker tous les codes
+      setFilteredCodesSecrets(todayCodes); // Afficher seulement ceux d'aujourd'hui
     } catch (err) {
       console.error('Erreur chargement codes secrets:', err);
     }
@@ -141,11 +185,14 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
     setLots([]);
     setSelectedLots([]);
     setCodesSecrets([]);
+    setFilteredCodesSecrets([]);
+    setShowOnlySelectedCodes(false);
   };
 
   const toggleSelectAll = () => {
     if (selectedLots.length === lots.length) {
       setSelectedLots([]);
+      setShowOnlySelectedCodes(false);
     } else {
       setSelectedLots(lots.map(lot => lot.ID_LOTS));
     }
@@ -157,15 +204,19 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
     );
   };
 
-  // Générer le code secret selon le format spécifié
-  const genererCodeSecret = (compteurEchantillons: number): string => {
-    const maintenant = new Date();
-    const derniereAnnee = maintenant.getFullYear().toString().slice(-1); // Dernier chiffre de l'année
-    const jourDeLAnnee = Math.floor((maintenant.getTime() - new Date(maintenant.getFullYear(), 0, 0).getTime()) / 86400000);
-    const jourFormate = jourDeLAnnee.toString().padStart(3, '0');
-    const echantillonFormate = compteurEchantillons.toString().padStart(3, '0');
-    
-    return `${derniereAnnee}${jourFormate}${echantillonFormate}`;
+  // Vérifier si un lot a déjà un 1er code
+  const lotAvecPremierCode = (lotId: number) => {
+    return codesSecrets.some(code => 
+      code.NUM_LOTS === lots.find(l => l.ID_LOTS === lotId)?.NUM_LOTS && 
+      code.LIBELLE_CODIFICATION === '1er code'
+    );
+  };
+
+  // Compter le nombre de reprises pour un lot
+  const compterReprises = (numeroLot: string) => {
+    return codesSecrets.filter(code => 
+      code.NUM_LOTS === numeroLot && code.LIBELLE_CODIFICATION === 'Reprise'
+    ).length;
   };
 
   // Générer le 1er code pour un lot
@@ -182,11 +233,14 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
         const result = await res.json();
         alert(`1er code généré avec succès: ${result.codeSecret}`);
         await chargerCodesSecrets();
+        // Recharger les lots pour mettre à jour l'état
+        await rechercherLotsSondes();
         if (onIncrementCodeJour) {
           onIncrementCodeJour();
         }
       } else {
-        alert('Erreur lors de la génération du 1er code');
+        const errorData = await res.json();
+        alert(`Erreur: ${errorData.error}`);
       }
     } catch (err) {
       console.error('Erreur génération 1er code:', err);
@@ -209,8 +263,12 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
         const result = await res.json();
         alert(`Reprise générée avec succès: ${result.codeSecret}`);
         await chargerCodesSecrets();
+        if (onIncrementCodeJour) {
+          onIncrementCodeJour();
+        }
       } else {
-        alert('Erreur lors de la génération de la reprise');
+        const errorData = await res.json();
+        alert(`Erreur: ${errorData.error}`);
       }
     } catch (err) {
       console.error('Erreur génération reprise:', err);
@@ -219,8 +277,8 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
     setGeneratingCodes(false);
   };
 
-  // Générer des codes pour plusieurs lots sélectionnés
-  const genererCodesSelection = async () => {
+  // Générer des 1ers codes pour plusieurs lots sélectionnés
+  const genererPremiersCodesSelection = async () => {
     if (selectedLots.length === 0) {
       alert('Veuillez sélectionner au moins un lot');
       return;
@@ -236,19 +294,55 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
 
       if (res.ok) {
         const result = await res.json();
-        alert(`${result.codesGeneres.length} code(s) généré(s) avec succès`);
+        alert(`${result.codesGeneres.length} 1er code(s) généré(s) avec succès`);
         await chargerCodesSecrets();
+        // Recharger les lots pour mettre à jour l'état
+        await rechercherLotsSondes();
         if (onIncrementCodeJour) {
           onIncrementCodeJour();
         }
       } else {
-        alert('Erreur lors de la génération des codes');
+        const errorData = await res.json();
+        alert(`Erreur: ${errorData.error}`);
       }
     } catch (err) {
       console.error('Erreur génération codes sélection:', err);
       alert('Erreur réseau');
     }
     setGeneratingCodes(false);
+  };
+
+  // Générer des reprises pour plusieurs lots sélectionnés
+  const genererReprisesSelection = async () => {
+    if (selectedLots.length === 0) {
+      alert('Veuillez sélectionner au moins un lot');
+      return;
+    }
+
+    setGeneratingReprises(true);
+    try {
+      const res = await fetch('http://localhost:5000/api/codes-secrets/generer-reprises-selection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lotsIds: selectedLots })
+      });
+
+      if (res.ok) {
+        const result = await res.json();
+        alert(`${result.codesGeneres.length} reprise(s) générée(s) avec succès`);
+        await chargerCodesSecrets();
+        if (onIncrementCodeJour) {
+          onIncrementCodeJour();
+        }
+      } else {
+        const errorData = await res.json();
+        alert(`Erreur: ${errorData.error}`);
+      }
+    } catch (err) {
+      console.error('Erreur génération reprises sélection:', err);
+      alert('Erreur réseau');
+    }
+    setGeneratingReprises(false);
   };
 
   // Imprimer un code spécifique
@@ -262,16 +356,17 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
       });
 
       if (res.ok) {
+        const result = await res.json();
         // Ouvrir une nouvelle fenêtre pour l'impression
         const printWindow = window.open('', '_blank');
         if (printWindow) {
-          const result = await res.json();
           printWindow.document.write(result.html);
           printWindow.document.close();
           printWindow.print();
         }
       } else {
-        alert('Erreur lors de la génération du document d\'impression');
+        const errorData = await res.json();
+        alert(`Erreur: ${errorData.error}`);
       }
     } catch (err) {
       console.error('Erreur impression:', err);
@@ -280,9 +375,9 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
     setPrintLoading(false);
   };
 
-  // Imprimer plusieurs codes
+  // Imprimer plusieurs codes (chacun sur sa propre page)
   const imprimerCodesSelection = async () => {
-    if (codesSecrets.length === 0) {
+    if (filteredCodesSecrets.length === 0) {
       alert('Aucun code à imprimer');
       return;
     }
@@ -292,19 +387,20 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
       const res = await fetch('http://localhost:5000/api/codes-secrets/imprimer-selection', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ codesSecrets })
+        body: JSON.stringify({ codesSecrets: filteredCodesSecrets })
       });
 
       if (res.ok) {
+        const result = await res.json();
         const printWindow = window.open('', '_blank');
         if (printWindow) {
-          const result = await res.json();
           printWindow.document.write(result.html);
           printWindow.document.close();
           printWindow.print();
         }
       } else {
-        alert('Erreur lors de la génération du document d\'impression');
+        const errorData = await res.json();
+        alert(`Erreur: ${errorData.error}`);
       }
     } catch (err) {
       console.error('Erreur impression multiple:', err);
@@ -331,19 +427,25 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
     }
   };
 
-  // Vérifier si un lot a déjà un 1er code
-  const lotAvecPremierCode = (lotId: number) => {
-    return codesSecrets.some(code => 
-      code.NUM_LOTS === lots.find(l => l.ID_LOTS === lotId)?.NUM_LOTS && 
-      code.LIBELLE_CODIFICATION === '1er code'
-    );
+  // Toggle pour afficher uniquement les codes des lots sélectionnés
+  const toggleShowOnlySelectedCodes = () => {
+    const newValue = !showOnlySelectedCodes;
+    setShowOnlySelectedCodes(newValue);
+    
+    if (newValue && selectedLots.length === 0) {
+      alert('Veuillez d\'abord sélectionner des lots');
+      setShowOnlySelectedCodes(false);
+      return;
+    }
+    
+    // Recharger les codes avec le filtre approprié
+    chargerCodesSecrets();
   };
 
-  // Compter le nombre de reprises pour un lot
-  const compterReprises = (numeroLot: string) => {
-    return codesSecrets.filter(code => 
-      code.NUM_LOTS === numeroLot && code.LIBELLE_CODIFICATION === 'Reprise'
-    ).length;
+  // Afficher tous les codes (pas seulement ceux d'aujourd'hui)
+  const afficherTousLesCodes = async () => {
+    setShowOnlySelectedCodes(false);
+    setFilteredCodesSecrets(codesSecrets);
   };
 
   return (
@@ -353,6 +455,9 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
         {/* Filters */}
         <div className="mb-6 pb-6">
           <h3 className="text-lg font-bold text-gray-800 mb-4 text-center">CRITÈRES DE RECHERCHE - LOTS SONDÉS</h3>
+          <p className="text-center text-sm text-gray-500 mb-6">
+            Cette page affiche uniquement les lots dont le sondage a été validé (ETAT_SONDAGE_LOTS = OUI)
+          </p>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4 text-sm">
             <div className="space-y-1">
               <label className="font-medium text-gray-600"># Référence</label>
@@ -500,13 +605,14 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
                   {lotsHeaders.map(header => (
                      <th key={header} className="p-2 font-semibold tracking-wider text-left whitespace-nowrap">{header}</th>
                   ))}
+                  <th className="p-2 font-semibold tracking-wider text-left whitespace-nowrap">ETAT CODIF.</th>
                   <th className="p-2 font-semibold tracking-wider text-left whitespace-nowrap">ACTIONS</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
                 {loading && (
                   <tr>
-                    <td colSpan={lotsHeaders.length + 3} className="text-center py-4">
+                    <td colSpan={lotsHeaders.length + 4} className="text-center py-4">
                       <div className="flex justify-center items-center">
                         <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
                         <span className="ml-2">Chargement...</span>
@@ -516,9 +622,11 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
                 )}
                 {!loading && lots.length === 0 && (
                   <tr>
-                    <td colSpan={lotsHeaders.length + 3} className="text-center py-10">
+                    <td colSpan={lotsHeaders.length + 4} className="text-center py-10">
                       <p className="text-gray-500 font-semibold">Aucun lot sondé à afficher</p>
-                      <p className="text-sm text-gray-400 mt-2">Les lots doivent d'abord être validés dans le module de sondage</p>
+                      <p className="text-sm text-gray-400 mt-2">
+                        Les lots doivent d'abord être validés dans le module de sondage (ETAT_SONDAGE_LOTS = OUI)
+                      </p>
                     </td>
                   </tr>
                 )}
@@ -534,7 +642,6 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
                     </td>
                     <td className="p-2 whitespace-nowrap font-medium">{lot.NUM_LOTS || '-'}</td>
                     <td className="p-2 whitespace-nowrap">{lot.REF_DEMANDE || '-'}</td>
-                    <td className="p-2 whitespace-nowrap">{lot.REF_DEMANDE || '-'}</td>
                     <td className="p-2 whitespace-nowrap">{lot.LIBELLE_PRODUIT || '-'}</td>
                     <td className="p-2 whitespace-nowrap">{lot.VILLE_EXPORTATEUR || '-'}</td>
                     <td className="p-2 whitespace-nowrap">{lot.RAISONSOCIALE_EXPORTATEUR || '-'}</td>
@@ -543,6 +650,11 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
                     <td className="p-2 whitespace-nowrap">{lot.RECOLTE_LOTS || '-'}</td>
                     <td className="p-2 whitespace-nowrap">{lot.NOM_MAGASIN || '-'}</td>
                     <td className="p-2 whitespace-nowrap">{lot.ID_GRADE || '-'}</td>
+                    <td className="p-2 whitespace-nowrap">
+                      <span className={`px-2 py-1 rounded-full text-xs ${lot.ETAT_CODIFICATION_LOTS === 'OUI' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                        {lot.ETAT_CODIFICATION_LOTS === 'OUI' ? 'Codifié' : 'Non codifié'}
+                      </span>
+                    </td>
                     <td className="p-2 whitespace-nowrap">
                       <div className="flex flex-col gap-1">
                         {!lotAvecPremierCode(lot.ID_LOTS) ? (
@@ -575,10 +687,40 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
 
         {/* Codes Secrets Table */}
         <div>
-          <h3 className="text-lg font-bold text-gray-800 mb-2 flex items-center">
-            <KeyIcon className="h-6 w-6 mr-2 text-blue-800" />
-            Codes Secrets Générés ({codesSecrets.length} code(s))
-          </h3>
+          <div className="flex justify-between items-center mb-2">
+            <h3 className="text-lg font-bold text-gray-800 flex items-center">
+              <KeyIcon className="h-6 w-6 mr-2 text-blue-800" />
+              Codes Secrets Générés ({filteredCodesSecrets.length} code(s))
+            </h3>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={toggleShowOnlySelectedCodes}
+                className={`flex items-center gap-2 px-3 py-1 rounded-lg text-sm font-medium ${
+                  showOnlySelectedCodes 
+                    ? 'bg-blue-100 text-blue-800 border border-blue-300' 
+                    : 'bg-gray-100 text-gray-700 border border-gray-300'
+                }`}
+                title={showOnlySelectedCodes ? "Afficher tous les codes" : "Afficher uniquement les codes des lots sélectionnés"}
+              >
+                <FilterIcon className="h-4 w-4" />
+                {showOnlySelectedCodes ? 'Filtré par sélection' : 'Filtrer par sélection'}
+                {showOnlySelectedCodes && selectedLots.length > 0 && (
+                  <span className="ml-1 bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full">
+                    {selectedLots.length}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={afficherTousLesCodes}
+                className="flex items-center gap-2 px-3 py-1 rounded-lg text-sm font-medium bg-gray-100 text-gray-700 border border-gray-300"
+                title="Afficher tous les codes (pas seulement ceux d'aujourd'hui)"
+              >
+                <RefreshIcon className="h-4 w-4" />
+                Tous les codes
+              </button>
+            </div>
+          </div>
+          
           <div className="overflow-x-auto border rounded-lg shadow-md">
             <table className="min-w-full text-xs">
               <thead className="bg-[#0d2d53] text-white uppercase">
@@ -592,15 +734,23 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {codesSecrets.length === 0 ? (
+                {filteredCodesSecrets.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="text-center py-10">
-                      <p className="text-gray-500 font-semibold">Aucun code généré</p>
-                      <p className="text-sm text-gray-400 mt-2">Générez des codes pour les lots affichés ci-dessus</p>
+                      <p className="text-gray-500 font-semibold">
+                        {showOnlySelectedCodes 
+                          ? 'Aucun code pour les lots sélectionnés' 
+                          : 'Aucun code généré aujourd\'hui'}
+                      </p>
+                      <p className="text-sm text-gray-400 mt-2">
+                        {showOnlySelectedCodes
+                          ? 'Sélectionnez des lots et générez des codes pour les voir ici'
+                          : 'Générez des codes pour les lots affichés ci-dessus'}
+                      </p>
                     </td>
                   </tr>
                 ) : (
-                  codesSecrets.map((code, index) => (
+                  filteredCodesSecrets.map((code, index) => (
                     <tr key={code.ID_CODIFICATION || index} className="hover:bg-gray-50">
                       <td className="p-2 whitespace-nowrap font-mono font-bold">{code.CODE_SECRET_CODIFICATION}</td>
                       <td className="p-2 whitespace-nowrap">
@@ -641,10 +791,10 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
-              <h4 className="font-semibold text-gray-700 mb-2">Génération de Codes</h4>
+              <h4 className="font-semibold text-gray-700 mb-2">Génération de 1ers Codes</h4>
               <div className="flex flex-wrap gap-2">
                 <button 
-                  onClick={genererCodesSelection}
+                  onClick={genererPremiersCodesSelection}
                   disabled={selectedLots.length === 0 || generatingCodes}
                   className={`${
                     selectedLots.length > 0 && !generatingCodes
@@ -654,38 +804,64 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
                 >
                   <SparklesIcon className="h-4 w-4"/>
                   <span>
-                    {generatingCodes ? 'Génération...' : `Générer Codes (${selectedLots.length})`}
+                    {generatingCodes ? 'Génération...' : `Générer 1ers Codes (${selectedLots.length})`}
                   </span>
                 </button>
               </div>
               <p className="text-xs text-gray-500 mt-2">
-                Génère le 1er code pour tous les lots sélectionnés
+                Génère le 1er code pour tous les lots sélectionnés (uniquement ceux sans 1er code)
               </p>
             </div>
             
             <div>
-              <h4 className="font-semibold text-gray-700 mb-2">Impression</h4>
+              <h4 className="font-semibold text-gray-700 mb-2">Génération de Reprises</h4>
               <div className="flex flex-wrap gap-2">
                 <button 
-                  onClick={imprimerCodesSelection}
-                  disabled={codesSecrets.length === 0 || printLoading}
+                  onClick={genererReprisesSelection}
+                  disabled={selectedLots.length === 0 || generatingReprises}
                   className={`${
-                    codesSecrets.length > 0 && !printLoading
+                    selectedLots.length > 0 && !generatingReprises
                       ? 'bg-blue-600 hover:bg-blue-700' 
                       : 'bg-gray-400 cursor-not-allowed'
                   } text-white font-bold py-2 px-4 rounded-lg shadow-md transition-colors flex items-center gap-2`}
                 >
-                  <PrintIcon className="h-4 w-4"/>
+                  
                   <span>
-                    {printLoading ? 'Préparation...' : `Imprimer Codes (${codesSecrets.length})`}
+                    {generatingReprises ? 'Génération...' : `Générer Reprises (${selectedLots.length})`}
                   </span>
                 </button>
               </div>
               <p className="text-xs text-gray-500 mt-2">
-                Imprime tous les codes générés (1 code par page)
+                Génère une reprise pour tous les lots sélectionnés ayant déjà un 1er code
               </p>
             </div>
           </div>
+        </div>
+
+        {/* Impression Section */}
+        <div className="mt-6 pt-6 border-t bg-green-50 p-6 rounded-lg">
+          <h4 className="font-semibold text-gray-700 mb-2">Impression</h4>
+          <div className="flex flex-wrap gap-2">
+            <button 
+              onClick={imprimerCodesSelection}
+              disabled={filteredCodesSecrets.length === 0 || printLoading}
+              className={`${
+                filteredCodesSecrets.length > 0 && !printLoading
+                  ? 'bg-orange-600 hover:bg-orange-700' 
+                  : 'bg-gray-400 cursor-not-allowed'
+              } text-white font-bold py-2 px-4 rounded-lg shadow-md transition-colors flex items-center gap-2`}
+            >
+              <PrintIcon className="h-4 w-4"/>
+              <span>
+                {printLoading ? 'Préparation...' : `Imprimer ${showOnlySelectedCodes ? 'Codes Sélectionnés' : 'Codes d\'Aujourd\'hui'} (${filteredCodesSecrets.length})`}
+              </span>
+            </button>
+          </div>
+          <p className="text-xs text-gray-500 mt-2">
+            {showOnlySelectedCodes
+              ? `Imprime les codes des ${selectedLots.length} lot(s) sélectionné(s) - 1 code par page`
+              : 'Imprime tous les codes générés aujourd\'hui - 1 code par page'}
+          </p>
         </div>
         
         {/* Bottom Actions */}

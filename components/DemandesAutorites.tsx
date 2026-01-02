@@ -39,7 +39,7 @@ interface Demande {
   CAMP_DEMANDE: string;
   LIBELLE_PRODUIT: string;
   EXPORTATEUR: string;
-  VILLE_EXPORTATEUR?: string;
+  VILLE_DEMANDE: string; // Changé : plus d'optionnel, c'est obligatoire
   NBRELOT_DEMANDE: number;
   POIDS_DEMANDE: number;
   NBRE_BV_DEMANDE: number;
@@ -354,7 +354,7 @@ const DemandesAutorites: React.FC<{
                     </td>
                     <td className="p-3 font-medium text-blue-600">{d.REF_DEMANDE || '-'}</td>
                     <td className="p-3">{d.LIBELLE_PRODUIT || '-'}</td>
-                    <td className="p-3">{d.VILLE_EXPORTATEUR || '-'}</td>
+                    <td className="p-3">{d.VILLE_DEMANDE || '-'}</td>
                     <td className="p-3">{d.EXPORTATEUR || '-'}</td>
                     <td className="p-3">{d.DATEREC_DEMANDE ? new Date(d.DATEREC_DEMANDE).toLocaleDateString() : '-'}</td>
                     <td className="p-3">{d.DATE_EXPIR_DEMANDE ? new Date(d.DATE_EXPIR_DEMANDE).toLocaleDateString() : '-'}</td>

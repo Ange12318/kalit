@@ -6,7 +6,7 @@ import {
   KeyIcon,
   PlusIcon,
   ValidationIcon,
-  RefreshIcon
+  RefreshIcon,
 } from './Icons';
 
 interface InitialisationCodeJourProps {
@@ -19,32 +19,72 @@ const InitialisationCodeJour: React.FC<InitialisationCodeJourProps> = ({ onNavig
   const [initializedBy, setInitializedBy] = useState<string>('');
   const [isActive, setIsActive] = useState<boolean>(false);
   const [lotsCodifiedCount, setLotsCodifiedCount] = useState<number>(0);
+  const [loading, setLoading] = useState<boolean>(false);
 
-  // Récupérer le nombre réel de lots codifiés aujourd'hui
+  // Charger l'état initial du code du jour
   useEffect(() => {
-    const fetchLotsCodifiedCount = async () => {
-  try {
-    const response = await fetch('http://localhost:5000/api/lots/codified/count-today');
-    const data = await response.json();
-    setLotsCodifiedCount(data.count || 0);
-  } catch (error) {
-    console.error('Erreur lors de la récupération du nombre de codes générés:', error);
-    setLotsCodifiedCount(0);
-  }
-};
+    const fetchCodeJourState = async () => {
+      setLoading(true);
+      try {
+        const response = await fetch('http://localhost:5000/api/code-jour/current');
+        const data = await response.json();
+        
+        if (data.statut === 'ACTIF') {
+          setCurrentCode(data.codeJour.toString());
+          setInitializationDate(data.dateInitialisation);
+          setInitializedBy(data.initialisePar);
+          setIsActive(true);
+          
+          // Récupérer le nombre de lots codifiés aujourd'hui
+          const countResponse = await fetch('http://localhost:5000/api/lots/codified/count-today');
+          const countData = await countResponse.json();
+          setLotsCodifiedCount(countData.count || 0);
+        } else {
+          setIsActive(false);
+          setCurrentCode('0');
+          setLotsCodifiedCount(0);
+        }
+      } catch (error) {
+        console.error('Erreur lors de la récupération du code du jour:', error);
+        setIsActive(false);
+        setLotsCodifiedCount(0);
+      }
+      setLoading(false);
+    };
 
-    if (isActive) {
-      fetchLotsCodifiedCount();
-      // Mettre à jour toutes les 30 secondes pour avoir les données fraîches
-      const interval = setInterval(fetchLotsCodifiedCount, 30000);
-      return () => clearInterval(interval);
-    }
+    fetchCodeJourState();
+  }, []);
+
+  // Mettre à jour le compteur toutes les 30 secondes quand actif
+  useEffect(() => {
+    if (!isActive) return;
+
+    const updateCounter = async () => {
+      try {
+        const countResponse = await fetch('http://localhost:5000/api/lots/codified/count-today');
+        const countData = await countResponse.json();
+        setLotsCodifiedCount(countData.count || 0);
+        
+        // Mettre à jour aussi le code du jour
+        const codeResponse = await fetch('http://localhost:5000/api/code-jour/current');
+        const codeData = await codeResponse.json();
+        if (codeData.statut === 'ACTIF') {
+          setCurrentCode(codeData.codeJour.toString());
+        }
+      } catch (error) {
+        console.error('Erreur mise à jour compteur:', error);
+      }
+    };
+
+    updateCounter();
+    const interval = setInterval(updateCounter, 30000);
+    return () => clearInterval(interval);
   }, [isActive]);
 
-  // Vérifier si le code est toujours valide (24h)
+  // Vérifier si le code a expiré (24h)
   useEffect(() => {
     const checkCodeValidity = () => {
-      if (initializationDate) {
+      if (initializationDate && isActive) {
         const initDate = new Date(initializationDate);
         const now = new Date();
         const diffTime = Math.abs(now.getTime() - initDate.getTime());
@@ -52,11 +92,7 @@ const InitialisationCodeJour: React.FC<InitialisationCodeJourProps> = ({ onNavig
         
         if (diffHours >= 24) {
           // Le code a expiré après 24h
-          setIsActive(false);
-          setCurrentCode('0');
-          setInitializationDate('');
-          setInitializedBy('');
-          setLotsCodifiedCount(0);
+          handleReset();
         }
       }
     };
@@ -64,9 +100,10 @@ const InitialisationCodeJour: React.FC<InitialisationCodeJourProps> = ({ onNavig
     checkCodeValidity();
     const interval = setInterval(checkCodeValidity, 60000); // Vérifier toutes les minutes
     return () => clearInterval(interval);
-  }, [initializationDate]);
+  }, [initializationDate, isActive]);
 
   const handleInitializeCode = async () => {
+    setLoading(true);
     const today = new Date();
     const formattedDate = today.toISOString();
     
@@ -81,39 +118,48 @@ const InitialisationCodeJour: React.FC<InitialisationCodeJourProps> = ({ onNavig
       });
 
       if (response.ok) {
+        const data = await response.json();
         setCurrentCode('0');
         setInitializationDate(formattedDate);
         setInitializedBy('Utilisateur');
         setIsActive(true);
         setLotsCodifiedCount(0);
+        alert('Code du jour initialisé avec succès');
       } else {
-        alert('Erreur lors de l\'initialisation du code du jour');
+        const errorData = await response.json();
+        alert(`Erreur: ${errorData.error}`);
       }
     } catch (error) {
       console.error('Erreur initialisation:', error);
       alert('Erreur réseau lors de l\'initialisation');
     }
+    setLoading(false);
   };
 
   const handleReset = async () => {
+    setLoading(true);
     try {
       const response = await fetch('http://localhost:5000/api/code-jour/reset', {
         method: 'POST'
       });
 
       if (response.ok) {
+        const data = await response.json();
         setCurrentCode('0');
         setInitializationDate('');
         setInitializedBy('');
         setIsActive(false);
         setLotsCodifiedCount(0);
+        alert('Code du jour réinitialisé avec succès');
       } else {
-        alert('Erreur lors de la réinitialisation du code du jour');
+        const errorData = await response.json();
+        alert(`Erreur: ${errorData.error}`);
       }
     } catch (error) {
       console.error('Erreur réinitialisation:', error);
       alert('Erreur réseau lors de la réinitialisation');
     }
+    setLoading(false);
   };
 
   // Calculer le code actuel basé sur le nombre de lots codifiés
@@ -122,6 +168,21 @@ const InitialisationCodeJour: React.FC<InitialisationCodeJourProps> = ({ onNavig
   // Formater la date pour l'affichage
   const displayDate = initializationDate 
     ? new Date(initializationDate).toLocaleDateString('fr-FR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+    : 'N/A';
+
+  // Calculer l'heure d'expiration
+  const expirationTime = initializationDate 
+    ? new Date(new Date(initializationDate).getTime() + (24 * 60 * 60 * 1000))
+    : null;
+
+  const displayExpiration = expirationTime 
+    ? expirationTime.toLocaleDateString('fr-FR', {
         day: '2-digit',
         month: '2-digit',
         year: 'numeric',
@@ -164,7 +225,12 @@ const InitialisationCodeJour: React.FC<InitialisationCodeJourProps> = ({ onNavig
           </h3>
           
           <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center mb-6 min-h-[100px] flex items-center justify-center bg-gray-50">
-            {isActive ? (
+            {loading ? (
+              <div className="flex items-center justify-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <span className="ml-3">Chargement...</span>
+              </div>
+            ) : isActive ? (
               <div className="text-center">
                 <span className="text-4xl font-mono font-bold tracking-widest text-gray-800 block">
                   {displayCode}
@@ -185,10 +251,14 @@ const InitialisationCodeJour: React.FC<InitialisationCodeJourProps> = ({ onNavig
             )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-center">
             <div className="bg-gray-50 p-3 rounded-md">
               <p className="text-xs font-semibold text-gray-500 uppercase">DÉBUT D'ACTIVITÉ</p>
               <p className="text-sm font-bold text-gray-800">{displayDate}</p>
+            </div>
+            <div className="bg-gray-50 p-3 rounded-md">
+              <p className="text-xs font-semibold text-gray-500 uppercase">EXPIRATION</p>
+              <p className="text-sm font-bold text-gray-800">{displayExpiration}</p>
             </div>
             <div className="bg-gray-50 p-3 rounded-md">
               <p className="text-xs font-semibold text-gray-500 uppercase">INITIALISÉ PAR</p>
@@ -210,7 +280,7 @@ const InitialisationCodeJour: React.FC<InitialisationCodeJourProps> = ({ onNavig
           </div>
         </div>
         
-        {/* Initialize Code Section - Simplifiée */}
+        {/* Initialize Code Section */}
         <div className="border rounded-lg p-6">
           <h3 className="text-lg font-bold text-gray-800 mb-6 flex items-center">
             <PlusIcon className="h-5 w-5 mr-2 text-gray-600"/>
@@ -228,19 +298,21 @@ const InitialisationCodeJour: React.FC<InitialisationCodeJourProps> = ({ onNavig
           <div className="flex justify-center flex-wrap gap-4">
             {!isActive ? (
               <button 
-                onClick={handleInitializeCode} 
+                onClick={handleInitializeCode}
+                disabled={loading}
                 className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-8 rounded-lg shadow-md transition-colors flex items-center gap-2"
               >
                 <ValidationIcon className="h-5 w-5"/>
-                <span>Activer le Code du Jour</span>
+                <span>{loading ? 'Initialisation...' : 'Activer le Code du Jour'}</span>
               </button>
             ) : (
               <button 
-                onClick={handleReset} 
+                onClick={handleReset}
+                disabled={loading}
                 className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-8 rounded-lg shadow-md transition-colors flex items-center gap-2"
               >
                 <RefreshIcon className="h-5 w-5"/>
-                <span>Réinitialiser le Code</span>
+                <span>{loading ? 'Réinitialisation...' : 'Réinitialiser le Code'}</span>
               </button>
             )}
           </div>
@@ -253,6 +325,9 @@ const InitialisationCodeJour: React.FC<InitialisationCodeJourProps> = ({ onNavig
                   Code actif • Prochain lot codifié : {parseInt(displayCode) + 1}
                 </span>
               </div>
+              <p className="text-sm text-green-600 text-center mt-2">
+                Le code sera automatiquement réinitialisé dans 24 heures
+              </p>
             </div>
           )}
         </div>
@@ -262,6 +337,7 @@ const InitialisationCodeJour: React.FC<InitialisationCodeJourProps> = ({ onNavig
       <div className="mt-8">
         <button 
           onClick={onNavigateBack} 
+          disabled={loading}
           className="flex items-center space-x-2 bg-[#0d2d53] hover:bg-blue-800 text-white font-semibold px-6 py-2 rounded-lg shadow-md transition-colors"
         >
           <BackArrowIcon className="h-5 w-5" />
