@@ -117,18 +117,821 @@ app.get('/api/grades', (req, res) => {
   );
 });
 
-// Nouvelle route pour les postes de contrôle
+// === ROUTE POUR LES POSTES DE CONTRÔLE ===
 app.get('/api/postes-controle', (req, res) => {
-  pool.query(
-    "SELECT CODE_POSTE_CONTROLE as code, VILLE_POSTE_CONTROLE as ville, LIBELLE_POSTE_CONTROLE as libelle, RESPONSBLE_POSTE_CONTROLE as responsable, ETAT_POSTE_CONTROLE as etat FROM poste_controle ORDER BY ville",
-    (err, results) => {
+  pool.query(`
+    SELECT 
+      CODE_POSTE_CONTROLE as code,
+      VILLE_POSTE_CONTROLE as ville,
+      LIBELLE_POSTE_CONTROLE as libelle,
+      RESPONSBLE_POSTE_CONTROLE as responsable,
+      ETAT_POSTE_CONTROLE as etat
+    FROM poste_controle 
+    ORDER BY VILLE_POSTE_CONTROLE
+  `, (err, results) => {
+    if (err) {
+      console.error("Erreur postes controle:", err);
+      return res.json([]);
+    }
+    res.json(results || []);
+  });
+}); 
+
+// ===============================================
+// NOUVELLE ROUTE : Valider un code secret
+// ===============================================
+app.get('/api/codes-secrets/valider/:code', (req, res) => {
+  const { code } = req.params;
+  
+  pool.query(`
+    SELECT 
+      rc.ID_CODIFICATION,
+      rc.CODE_SECRET_CODIFICATION,
+      rc.LIBELLE_CODIFICATION,
+      l.ID_LOTS,
+      l.NUM_LOTS,
+      d.REF_DEMANDE,
+      p.ID_PRODUIT,
+      p.LIBELLE_PRODUIT,
+      e.RAISONSOCIALE_EXPORTATEUR,
+      l.RECOLTE_LOTS,
+      mg.NOM_MAGASIN
+    FROM registre_codification rc
+    JOIN resgistre_sondage rs ON rc.ID_SONDAGE = rs.ID_SONDAGE
+    JOIN lots l ON rs.ID_LOT = l.ID_LOTS
+    JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
+    JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
+    JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
+    LEFT JOIN magasins mg ON l.ID_ENTREPOT = mg.ID_MAGASIN
+    WHERE rc.CODE_SECRET_CODIFICATION = ?
+    LIMIT 1
+  `, [code], (err, results) => {
+    if (err) {
+      console.error("Erreur validation code:", err);
+      return res.status(500).json({ error: err.message });
+    }
+    
+    if (results.length === 0) {
+      return res.status(404).json({ error: 'Code secret invalide' });
+    }
+    
+    res.json(results[0]);
+  });
+});
+
+// ===============================================
+// ROUTE : Enregistrer analyse CACAO (CORRIGÉE)
+// ===============================================
+app.post('/api/analyses/cacao', (req, res) => {
+  const {
+    idCodification,
+    
+    // Formation générale
+    poidsDeclaration,
+    poidsEchantillon,
+    poidsTotalEchantillon,
+    
+    // Première partie - Tableau des analyses
+    fevesEntieres,
+    fevesPlates,
+    poidsDechet,
+    poidsFevesPlates,
+    poidsFevesEntieres,
+    
+    // Épreuve à la loupe
+    poidsBrisures,
+    poidsEtrangeres,
+    poidsFevesBrisees,
+    poidsCoques,
+    poidsCrabot,
+    
+    // Détermination du grainage
+    totalFevesEntieres,
+    grainage,
+    poidsNombreFevesEntieres,
+    
+    // Taux d'humidité
+    lectureHumidite1,
+    lectureHumidite2,
+    lectureHumidite3,
+    tauxHumiditePourcentage,
+    
+    // Classification
+    normeIvoirienne,
+    normeInternationale,
+    conforme,
+    remarque,
+    
+    // Défauts
+    moisiePlateau1,
+    moisiePlateau2,
+    moisiePlateau3,
+    
+    miteePlateau1,
+    miteePlateau2,
+    miteePlateau3,
+    
+    ardoiseePlateau1,
+    ardoiseePlateau2,
+    ardoiseePlateau3,
+    
+    platePlateau1,
+    platePlateau2,
+    platePlateau3,
+    
+    germeePlateau1,
+    germeePlateau2,
+    germeePlateau3,
+    
+    violettePlateau1,
+    violettePlateau2,
+    violettePlateau3,
+    
+    nbreFevesDefauts,
+    
+    analyseurId
+  } = req.body;
+  
+  console.log('Données reçues pour analyse cacao');
+  
+  // Fonction de calcul pour les défauts
+  const calculerTotalDefaut = (p1, p2, p3) => {
+    const val1 = parseFloat(p1) || 0;
+    const val2 = parseFloat(p2) || 0;
+    const val3 = parseFloat(p3) || 0;
+    return (val1 + val2 + val3).toFixed(3);
+  };
+  
+  // Fonction de calcul pour les pourcentages
+  const calculerPourcentage = (total, nbreFeves) => {
+    const totalNum = parseFloat(total) || 0;
+    const nbreFevesNum = parseFloat(nbreFeves) || 0;
+    if (nbreFevesNum === 0) return '0.000';
+    return ((totalNum / nbreFevesNum) * 100).toFixed(3);
+  };
+  
+  // Calculer les totaux et pourcentages
+  const totalMoisie = calculerTotalDefaut(moisiePlateau1, moisiePlateau2, moisiePlateau3);
+  const pourcentageMoisie = calculerPourcentage(totalMoisie, nbreFevesDefauts);
+  
+  const totalMitee = calculerTotalDefaut(miteePlateau1, miteePlateau2, miteePlateau3);
+  const pourcentageMitee = calculerPourcentage(totalMitee, nbreFevesDefauts);
+  
+  const totalArdoisee = calculerTotalDefaut(ardoiseePlateau1, ardoiseePlateau2, ardoiseePlateau3);
+  const pourcentageArdoisee = calculerPourcentage(totalArdoisee, nbreFevesDefauts);
+  
+  const totalPlate = calculerTotalDefaut(platePlateau1, platePlateau2, platePlateau3);
+  const pourcentagePlate = calculerPourcentage(totalPlate, nbreFevesDefauts);
+  
+  const totalGermee = calculerTotalDefaut(germeePlateau1, germeePlateau2, germeePlateau3);
+  const pourcentageGermee = calculerPourcentage(totalGermee, nbreFevesDefauts);
+  
+  const totalViolette = calculerTotalDefaut(violettePlateau1, violettePlateau2, violettePlateau3);
+  const pourcentageViolette = calculerPourcentage(totalViolette, nbreFevesDefauts);
+  
+  // Calculer le total de l'épreuve à la loupe (sans coques)
+  const totalLoupe = (
+    (parseFloat(poidsBrisures) || 0) +
+    (parseFloat(poidsEtrangeres) || 0) +
+    (parseFloat(poidsFevesBrisees) || 0) +
+    (parseFloat(poidsCrabot) || 0)
+  ).toFixed(3);
+  
+  // Calculer le total humidité
+  const totalHumidite = (
+    (parseFloat(lectureHumidite1) || 0) +
+    (parseFloat(lectureHumidite2) || 0) +
+    (parseFloat(lectureHumidite3) || 0)
+  ).toFixed(3);
+  
+  const utilisateurAnalyseur = analyseurId || 7;
+  
+  const remarqueEtendue = poidsNombreFevesEntieres 
+    ? `${remarque || ''} | Poids Nb Fèves: ${poidsNombreFevesEntieres}`.trim()
+    : remarque || '';
+  
+  // Vérifier si la colonne POIDS_NOMBRE_FEVES_ENTIERES existe
+  const sqlVerification = "SHOW COLUMNS FROM kko_analyses LIKE 'POIDS_NOMBRE_FEVES_ENTIERES'";
+  
+  pool.query(sqlVerification, (err, results) => {
+    if (err) {
+      console.error("Erreur vérification colonne:", err);
+      return res.status(500).json({ error: 'Erreur vérification table: ' + err.message });
+    }
+    
+    const colonneExiste = results.length > 0;
+    
+    let sql;
+    let values;
+    
+    if (colonneExiste) {
+      // VERSION AVEC COLONNE - 64 colonnes, 64 valeurs
+      sql = `
+        INSERT INTO kko_analyses (
+          ID_CODIFICATION,
+          DATE_ANALYSE_KKO,
+          ANALYSEUR_ANALYSE_KKO,
+          
+          POIDS_DECLARATION,
+          POIDS_ECHAN_ANALYSE_KKO,
+          POIDS_TOTAL_ECHANTILLON,
+          
+          FEVES_ENTIERES,
+          FEVES_PLATES,
+          POIDS_DECHET,
+          POIDS_FEVES_PLATES,
+          POIDS_FEVES_ENTIERES,
+          
+          POIDS_BRISURES,
+          POIDS_ETRANGERES,
+          POIDS_FEVES_BRISEES,
+          POIDS_COQUES,
+          POIDS_CRABOT,
+          TOTAL_LOUPE,
+          
+          TOTAL_FEVES_ENTIERES,
+          GRAINAGE,
+          POIDS_NOMBRE_FEVES_ENTIERES,
+          
+          LECTURE_HUMIDITE_1,
+          LECTURE_HUMIDITE_2,
+          LECTURE_HUMIDITE_3,
+          TOTAL_HUMIDITE,
+          TAUXHUMIDITE,
+          
+          NORME_IVOIRIENNE,
+          NORME_INTERNATIONALE,
+          CONFORME,
+          REMARQUE,
+          
+          MOISIE_PLATEAU1, MOISIE_PLATEAU2, MOISIE_PLATEAU3,
+          MOISIE_TOTAL, MOISIE_CALCULE,
+          
+          MITEE_PLATEAU1, MITEE_PLATEAU2, MITEE_PLATEAU3,
+          MITEE_TOTAL, MITEE_CALCULE,
+          
+          ARDOISEE_PLATEAU1, ARDOISEE_PLATEAU2, ARDOISEE_PLATEAU3,
+          ARDOISEE_TOTAL, ARDOISEE_CALCULE,
+          
+          PLATE_PLATEAU1, PLATE_PLATEAU2, PLATE_PLATEAU3,
+          PLATE_TOTAL, PLATE_CALCULE,
+          
+          GERMEE_PLATEAU1, GERMEE_PLATEAU2, GERMEE_PLATEAU3,
+          GERMEE_TOTAL, GERMEE_CALCULE,
+          
+          VIOLETTE_PLATEAU1, VIOLETTE_PLATEAU2, VIOLETTE_PLATEAU3,
+          VIOLETTE_TOTAL, VIOLETTE_CALCULE,
+          
+          NBRE_FEVES_DEFAUTS,
+          
+          NORME_UTILISEE,
+          TYPE_NORME,
+          VALIDER_ANALYSE_KKO
+        ) VALUES (
+          ?, NOW(), ?,
+          ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?,
+          ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?,
+          'Norme Ivoirienne', 'GF', 0
+        )
+      `;
+      
+      values = [
+        idCodification,
+        utilisateurAnalyseur,
+        
+        poidsDeclaration || null,
+        poidsEchantillon || null,
+        poidsTotalEchantillon || null,
+        
+        fevesEntieres || null,
+        fevesPlates || null,
+        poidsDechet || null,
+        poidsFevesPlates || null,
+        poidsFevesEntieres || null,
+        
+        poidsBrisures || null,
+        poidsEtrangeres || null,
+        poidsFevesBrisees || null,
+        poidsCoques || '0',
+        poidsCrabot || null,
+        totalLoupe,
+        
+        totalFevesEntieres || null,
+        grainage || null,
+        poidsNombreFevesEntieres || null,
+        
+        lectureHumidite1 || null,
+        lectureHumidite2 || null,
+        lectureHumidite3 || null,
+        totalHumidite,
+        tauxHumiditePourcentage || null,
+        
+        normeIvoirienne || '',
+        normeInternationale || '',
+        conforme ? 1 : 0,
+        remarqueEtendue || '',
+        
+        moisiePlateau1 || null, moisiePlateau2 || null, moisiePlateau3 || null,
+        totalMoisie, pourcentageMoisie,
+        
+        miteePlateau1 || null, miteePlateau2 || null, miteePlateau3 || null,
+        totalMitee, pourcentageMitee,
+        
+        ardoiseePlateau1 || null, ardoiseePlateau2 || null, ardoiseePlateau3 || null,
+        totalArdoisee, pourcentageArdoisee,
+        
+        platePlateau1 || null, platePlateau2 || null, platePlateau3 || null,
+        totalPlate, pourcentagePlate,
+        
+        germeePlateau1 || null, germeePlateau2 || null, germeePlateau3 || null,
+        totalGermee, pourcentageGermee,
+        
+        violettePlateau1 || null, violettePlateau2 || null, violettePlateau3 || null,
+        totalViolette, pourcentageViolette,
+        
+        nbreFevesDefauts || '300'
+      ];
+    } else {
+      // VERSION SANS COLONNE - 63 colonnes, 63 valeurs
+      sql = `
+        INSERT INTO kko_analyses (
+          ID_CODIFICATION,
+          DATE_ANALYSE_KKO,
+          ANALYSEUR_ANALYSE_KKO,
+          
+          POIDS_DECLARATION,
+          POIDS_ECHAN_ANALYSE_KKO,
+          POIDS_TOTAL_ECHANTILLON,
+          
+          FEVES_ENTIERES,
+          FEVES_PLATES,
+          POIDS_DECHET,
+          POIDS_FEVES_PLATES,
+          POIDS_FEVES_ENTIERES,
+          
+          POIDS_BRISURES,
+          POIDS_ETRANGERES,
+          POIDS_FEVES_BRISEES,
+          POIDS_COQUES,
+          POIDS_CRABOT,
+          TOTAL_LOUPE,
+          
+          TOTAL_FEVES_ENTIERES,
+          GRAINAGE,
+          
+          LECTURE_HUMIDITE_1,
+          LECTURE_HUMIDITE_2,
+          LECTURE_HUMIDITE_3,
+          TOTAL_HUMIDITE,
+          TAUXHUMIDITE,
+          
+          NORME_IVOIRIENNE,
+          NORME_INTERNATIONALE,
+          CONFORME,
+          REMARQUE,
+          
+          MOISIE_PLATEAU1, MOISIE_PLATEAU2, MOISIE_PLATEAU3,
+          MOISIE_TOTAL, MOISIE_CALCULE,
+          
+          MITEE_PLATEAU1, MITEE_PLATEAU2, MITEE_PLATEAU3,
+          MITEE_TOTAL, MITEE_CALCULE,
+          
+          ARDOISEE_PLATEAU1, ARDOISEE_PLATEAU2, ARDOISEE_PLATEAU3,
+          ARDOISEE_TOTAL, ARDOISEE_CALCULE,
+          
+          PLATE_PLATEAU1, PLATE_PLATEAU2, PLATE_PLATEAU3,
+          PLATE_TOTAL, PLATE_CALCULE,
+          
+          GERMEE_PLATEAU1, GERMEE_PLATEAU2, GERMEE_PLATEAU3,
+          GERMEE_TOTAL, GERMEE_CALCULE,
+          
+          VIOLETTE_PLATEAU1, VIOLETTE_PLATEAU2, VIOLETTE_PLATEAU3,
+          VIOLETTE_TOTAL, VIOLETTE_CALCULE,
+          
+          NBRE_FEVES_DEFAUTS,
+          
+          NORME_UTILISEE,
+          TYPE_NORME,
+          VALIDER_ANALYSE_KKO
+        ) VALUES (
+          ?, NOW(), ?,
+          ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?,
+          ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          ?,
+          'Norme Ivoirienne', 'GF', 0
+        )
+      `;
+      
+      values = [
+        idCodification,
+        utilisateurAnalyseur,
+        
+        poidsDeclaration || null,
+        poidsEchantillon || null,
+        poidsTotalEchantillon || null,
+        
+        fevesEntieres || null,
+        fevesPlates || null,
+        poidsDechet || null,
+        poidsFevesPlates || null,
+        poidsFevesEntieres || null,
+        
+        poidsBrisures || null,
+        poidsEtrangeres || null,
+        poidsFevesBrisees || null,
+        poidsCoques || '0',
+        poidsCrabot || null,
+        totalLoupe,
+        
+        totalFevesEntieres || null,
+        grainage || null,
+        
+        lectureHumidite1 || null,
+        lectureHumidite2 || null,
+        lectureHumidite3 || null,
+        totalHumidite,
+        tauxHumiditePourcentage || null,
+        
+        normeIvoirienne || '',
+        normeInternationale || '',
+        conforme ? 1 : 0,
+        remarqueEtendue || '',
+        
+        moisiePlateau1 || null, moisiePlateau2 || null, moisiePlateau3 || null,
+        totalMoisie, pourcentageMoisie,
+        
+        miteePlateau1 || null, miteePlateau2 || null, miteePlateau3 || null,
+        totalMitee, pourcentageMitee,
+        
+        ardoiseePlateau1 || null, ardoiseePlateau2 || null, ardoiseePlateau3 || null,
+        totalArdoisee, pourcentageArdoisee,
+        
+        platePlateau1 || null, platePlateau2 || null, platePlateau3 || null,
+        totalPlate, pourcentagePlate,
+        
+        germeePlateau1 || null, germeePlateau2 || null, germeePlateau3 || null,
+        totalGermee, pourcentageGermee,
+        
+        violettePlateau1 || null, violettePlateau2 || null, violettePlateau3 || null,
+        totalViolette, pourcentageViolette,
+        
+        nbreFevesDefauts || '300'
+      ];
+    }
+    
+    console.log('Enregistrement analyse cacao avec', values.length, 'valeurs');
+    console.log('Colonne POIDS_NOMBRE_FEVES_ENTIERES existe:', colonneExiste);
+    
+    pool.query(sql, values, (err, result) => {
       if (err) {
-        console.error("Erreur postes-controle:", err);
-        return res.json([]);
+        console.error("Erreur enregistrement analyse cacao:", err);
+        console.error("SQL Error:", err.sqlMessage);
+        
+        return res.status(500).json({ 
+          error: 'Erreur enregistrement: ' + err.message,
+          sqlError: err.sqlMessage,
+          colonneExiste: colonneExiste
+        });
       }
-      res.json(results || []);
+      
+      res.json({ 
+        success: true, 
+        message: 'Analyse cacao enregistrée avec succès',
+        idAnalyse: result.insertId,
+        colonneUtilisee: colonneExiste ? 'POIDS_NOMBRE_FEVES_ENTIERES' : 'REMARQUE'
+      });
+    });
+  });
+});
+
+// ===============================================
+// NOUVELLE ROUTE : Enregistrer analyse CAFÉ
+// ===============================================
+app.post('/api/analyses/cafe', (req, res) => {
+  const {
+    idCodification,
+    tauxHumidite,
+    normeClassification,
+    tamis18_saisi,
+    tamis16_saisi,
+    tamis14_saisi,
+    tamis12_saisi,
+    tamis10_saisi,
+    tamisbas_saisi,
+    nbreDefaut,
+    poidsDefaut,
+    analyseurId
+  } = req.body;
+  
+  // Fonction de calcul : (valeur * 100) / 3
+  const calculer = (valeur) => {
+    if (!valeur) return null;
+    return (parseFloat(valeur) * 100) / 3;
+  };
+  
+  // Utiliser l'analyseurId fourni ou une valeur par défaut qui existe
+  const utilisateurAnalyseur = analyseurId || 7; // ID_UTILISATEURS = 7 (Ange Man)
+  
+  const sql = `
+    INSERT INTO kfe_analyses (
+      ID_CODIFICATION,
+      TAUXHUMIDITE,
+      NORME_CLASSIFICATION,
+      TAMIS18_SAISI, TAMIS18_CALCULE,
+      TAMIS16_SAISI, TAMIS16_CALCULE,
+      TAMIS14_SAISI, TAMIS14_CALCULE,
+      TAMIS12_SAISI, TAMIS12_CALCULE,
+      TAMIS10_SAISI, TAMIS10_CALCULE,
+      TAMISBAS_SAISI, TAMISBAS_CALCULE,
+      NBREDEFAUT,
+      POIDSDEFAUT,
+      ANALYSEUR_ANALYSE_KFE,
+      DATE_ANALYSE_KFE,
+      VALIDER_ANALYSE_KFE
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 0)
+  `;
+  
+  pool.query(sql, [
+    idCodification,
+    tauxHumidite,
+    normeClassification,
+    tamis18_saisi, calculer(tamis18_saisi),
+    tamis16_saisi, calculer(tamis16_saisi),
+    tamis14_saisi, calculer(tamis14_saisi),
+    tamis12_saisi, calculer(tamis12_saisi),
+    tamis10_saisi, calculer(tamis10_saisi),
+    tamisbas_saisi, calculer(tamisbas_saisi),
+    nbreDefaut,
+    poidsDefaut,
+    utilisateurAnalyseur
+  ], (err, result) => {
+    if (err) {
+      console.error("Erreur enregistrement analyse café:", err);
+      return res.status(500).json({ error: err.message });
+    }
+    
+    res.json({ 
+      success: true, 
+      message: 'Analyse café enregistrée avec succès',
+      idAnalyse: result.insertId
+    });
+  });
+});
+
+// ===============================================
+// ROUTES POUR LA GESTION DES RÉSULTATS D'ANALYSES
+// ===============================================
+
+// Route pour récupérer toutes les analyses Cacao avec filtres
+app.get('/api/analyses/cacao', (req, res) => {
+  const { 
+    codeSecret, dateDebut, dateFin, campagne, ville, 
+    exportateur, conforme, limit 
+  } = req.query;
+  
+  let sql = `
+    SELECT 
+      ka.*,
+      rc.CODE_SECRET_CODIFICATION,
+      l.NUM_LOTS,
+      e.RAISONSOCIALE_EXPORTATEUR,
+      p.LIBELLE_PRODUIT,
+      d.CAMP_DEMANDE,
+      d.VILLE_DEMANDE,
+      u.NOM_UTILISATEURS as NOM_ANALYSEUR
+    FROM kko_analyses ka
+    LEFT JOIN registre_codification rc ON ka.ID_CODIFICATION = rc.ID_CODIFICATION
+    LEFT JOIN resgistre_sondage rs ON rc.ID_SONDAGE = rs.ID_SONDAGE
+    LEFT JOIN lots l ON rs.ID_Lot = l.ID_LOTS
+    LEFT JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
+    LEFT JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
+    LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
+    LEFT JOIN utilisateurs u ON ka.ANALYSEUR_ANALYSE_KKO = u.ID_UTILISATEURS
+    WHERE 1=1
+  `;
+  
+  const params = [];
+  
+  // Filtres
+  if (codeSecret) {
+    sql += " AND rc.CODE_SECRET_CODIFICATION LIKE ?";
+    params.push(`%${codeSecret}%`);
+  }
+  
+  if (dateDebut) {
+    sql += " AND DATE(ka.DATE_ANALYSE_KKO) >= ?";
+    params.push(dateDebut);
+  }
+  
+  if (dateFin) {
+    sql += " AND DATE(ka.DATE_ANALYSE_KKO) <= ?";
+    params.push(dateFin);
+  }
+  
+  if (campagne && campagne !== 'all') {
+    sql += " AND d.CAMP_DEMANDE = ?";
+    params.push(campagne);
+  }
+  
+  if (ville && ville !== 'all') {
+    sql += " AND d.VILLE_DEMANDE = ?";
+    params.push(ville);
+  }
+  
+  if (exportateur && exportateur !== 'all') {
+    sql += " AND e.RAISONSOCIALE_EXPORTATEUR LIKE ?";
+    params.push(`%${exportateur}%`);
+  }
+  
+  if (conforme && conforme !== 'all') {
+    const conformeBool = conforme === 'conforme' ? 1 : 0;
+    sql += " AND ka.CONFORME = ?";
+    params.push(conformeBool);
+  }
+  
+  sql += " ORDER BY ka.DATE_ANALYSE_KKO DESC";
+  
+  // Limite
+  if (limit) {
+    sql += " LIMIT ?";
+    params.push(parseInt(limit));
+  } else {
+    sql += " LIMIT 100"; // Limite par défaut
+  }
+  
+  pool.query(sql, params, (err, results) => {
+    if (err) {
+      console.error("Erreur récupération analyses cacao:", err);
+      return res.status(500).json({ error: err.message });
+    }
+    res.json(results || []);
+  });
+});
+
+// Route pour valider/rejeter des analyses
+app.post('/api/analyses/valider', (req, res) => {
+  const { analysesIds, valider } = req.body;
+  
+  if (!analysesIds || !Array.isArray(analysesIds) || analysesIds.length === 0) {
+    return res.status(400).json({ error: "Liste d'analyses invalide" });
+  }
+  
+  const validerInt = valider ? 1 : 0;
+  
+  pool.query(
+    "UPDATE kko_analyses SET VALIDER_ANALYSE_KKO = ? WHERE ID_ANALYSE_KKO IN (?)",
+    [validerInt, analysesIds],
+    (err, result) => {
+      if (err) {
+        console.error("Erreur validation analyses:", err);
+        return res.status(500).json({ error: err.message });
+      }
+      
+      res.json({ 
+        success: true, 
+        message: `${result.affectedRows} analyse(s) ${valider ? 'validée(s)' : 'rejetée(s)'} avec succès` 
+      });
     }
   );
+});
+
+// Route pour modifier une analyse
+app.put('/api/analyses/:id', (req, res) => {
+  const { id } = req.params;
+  const updates = req.body;
+  
+  // Vérifier que l'analyse existe
+  pool.query("SELECT * FROM kko_analyses WHERE ID_ANALYSE_KKO = ?", [id], (err, results) => {
+    if (err) {
+      console.error("Erreur vérification analyse:", err);
+      return res.status(500).json({ error: err.message });
+    }
+    
+    if (results.length === 0) {
+      return res.status(404).json({ error: "Analyse non trouvée" });
+    }
+    
+    // Construire la requête de mise à jour dynamiquement
+    const setClauses = [];
+    const values = [];
+    
+    // Champs modifiables
+    const allowedFields = [
+      'POIDS_BRISURES', 'POIDS_DECHET', 'POIDS_CRABOT', 'POIDS_ETRANGERES',
+      'TAUXHUMIDITE', 'CONFORME', 'REMARQUE', 'MOISIE_CALCULE',
+      'MITEE_CALCULE', 'ARDOISEE_CALCULE', 'PLATE_CALCULE',
+      'GERMEE_CALCULE', 'VIOLETTE_CALCULE', 'NORME_IVOIRIENNE',
+      'NORME_INTERNATIONALE'
+    ];
+    
+    allowedFields.forEach(field => {
+      if (updates[field] !== undefined) {
+        setClauses.push(`${field} = ?`);
+        values.push(updates[field]);
+      }
+    });
+    
+    if (setClauses.length === 0) {
+      return res.status(400).json({ error: "Aucune modification à apporter" });
+    }
+    
+    // Ajouter l'ID à la fin des valeurs
+    values.push(id);
+    
+    const sql = `UPDATE kko_analyses SET ${setClauses.join(', ')} WHERE ID_ANALYSE_KKO = ?`;
+    
+    pool.query(sql, values, (err, result) => {
+      if (err) {
+        console.error("Erreur modification analyse:", err);
+        return res.status(500).json({ error: err.message });
+      }
+      
+      res.json({ 
+        success: true, 
+        message: "Analyse modifiée avec succès",
+        affectedRows: result.affectedRows 
+      });
+    });
+  });
+});
+
+// Route pour récupérer une analyse spécifique
+app.get('/api/analyses/:id', (req, res) => {
+  const { id } = req.params;
+  
+  pool.query(`
+    SELECT 
+      ka.*,
+      rc.CODE_SECRET_CODIFICATION,
+      l.NUM_LOTS,
+      e.RAISONSOCIALE_EXPORTATEUR,
+      p.LIBELLE_PRODUIT,
+      d.CAMP_DEMANDE,
+      d.VILLE_DEMANDE,
+      u.NOM_UTILISATEURS as NOM_ANALYSEUR
+    FROM kko_analyses ka
+    LEFT JOIN registre_codification rc ON ka.ID_CODIFICATION = rc.ID_CODIFICATION
+    LEFT JOIN resgistre_sondage rs ON rc.ID_SONDAGE = rs.ID_SONDAGE
+    LEFT JOIN lots l ON rs.ID_Lot = l.ID_LOTS
+    LEFT JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
+    LEFT JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
+    LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
+    LEFT JOIN utilisateurs u ON ka.ANALYSEUR_ANALYSE_KKO = u.ID_UTILISATEURS
+    WHERE ka.ID_ANALYSE_KKO = ?
+  `, [id], (err, results) => {
+    if (err) {
+      console.error("Erreur récupération analyse:", err);
+      return res.status(500).json({ error: err.message });
+    }
+    
+    if (results.length === 0) {
+      return res.status(404).json({ error: "Analyse non trouvée" });
+    }
+    
+    res.json(results[0]);
+  });
+});
+
+// Route pour supprimer une analyse
+app.delete('/api/analyses/:id', (req, res) => {
+  const { id } = req.params;
+  
+  pool.query("DELETE FROM kko_analyses WHERE ID_ANALYSE_KKO = ?", [id], (err, result) => {
+    if (err) {
+      console.error("Erreur suppression analyse:", err);
+      return res.status(500).json({ error: err.message });
+    }
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: "Analyse non trouvée" });
+    }
+    
+    res.json({ 
+      success: true, 
+      message: "Analyse supprimée avec succès" 
+    });
+  });
 });
 
 // Route pour récupérer toutes les demandes avec filtres
@@ -256,6 +1059,197 @@ app.get('/api/demandes/:id/lots', (req, res) => {
     if (err) {
       console.error("Erreur récupération lots:", err);
       return res.json([]);
+    }
+    res.json(results || []);
+  });
+});
+
+// ===============================================
+// ROUTES POUR LA TABLE analysevalider
+// ===============================================
+
+// Route pour valider/rejeter des analyses et les enregistrer dans analysevalider
+app.post('/api/analyses/valider', async (req, res) => {
+  const { analysesIds, valider } = req.body;
+  
+  if (!analysesIds || !Array.isArray(analysesIds) || analysesIds.length === 0) {
+    return res.status(400).json({ error: "Liste d'analyses invalide" });
+  }
+  
+  const validerInt = valider ? 1 : 0;
+  const action = valider ? 'validate' : 'reject';
+  const statut = valider ? 'validé' : 'rejeté';
+  const validateurId = 7; // ID de l'utilisateur par défaut (Ange Man)
+  
+  try {
+    // Pour chaque analyse, récupérer les données et les insérer dans analysevalider
+    for (const analyseId of analysesIds) {
+      // Récupérer les données de l'analyse
+      const analyseData = await new Promise((resolve, reject) => {
+        pool.query(`
+          SELECT 
+            ka.*,
+            rc.CODE_SECRET_CODIFICATION,
+            l.NUM_LOTS,
+            e.RAISONSOCIALE_EXPORTATEUR,
+            p.LIBELLE_PRODUIT,
+            d.CAMP_DEMANDE,
+            d.VILLE_DEMANDE
+          FROM kko_analyses ka
+          LEFT JOIN registre_codification rc ON ka.ID_CODIFICATION = rc.ID_CODIFICATION
+          LEFT JOIN resgistre_sondage rs ON rc.ID_SONDAGE = rs.ID_SONDAGE
+          LEFT JOIN lots l ON rs.ID_Lot = l.ID_LOTS
+          LEFT JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
+          LEFT JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
+          LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
+          WHERE ka.ID_ANALYSE_KKO = ?
+        `, [analyseId], (err, results) => {
+          if (err) reject(err);
+          else resolve(results[0]);
+        });
+      });
+      
+      if (!analyseData) {
+        console.error(`Analyse ${analyseId} non trouvée`);
+        continue;
+      }
+      
+      // Insérer dans analysevalider
+      await new Promise((resolve, reject) => {
+        pool.query(`
+          INSERT INTO analysevalider (
+            ID_ANALYSE_KKO, CODE_SECRET_CODIFICATION, DATE_VALIDATION, VALIDATEUR_ID, ACTION,
+            NORME_IVOIRIENNE, NORME_INTERNATIONALE, CONFORME, REMARQUE, STATUT,
+            POIDS_BRISURES, POIDS_DECHET, POIDS_CRABOT, POIDS_ETRANGERES,
+            GRAINAGE, TAUXHUMIDITE, MOISIE_CALCULE, MITEE_CALCULE, ARDOISEE_CALCULE,
+            PLATE_CALCULE, GERMEE_CALCULE, VIOLETTE_CALCULE,
+            NUM_LOTS, RAISONSOCIALE_EXPORTATEUR, LIBELLE_PRODUIT,
+            CAMP_DEMANDE, VILLE_DEMANDE
+          ) VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+          analyseId,
+          analyseData.CODE_SECRET_CODIFICATION || '',
+          validateurId,
+          action,
+          analyseData.NORME_IVOIRIENNE || '',
+          analyseData.NORME_INTERNATIONALE || '',
+          analyseData.CONFORME || 0,
+          analyseData.REMARQUE || '',
+          statut,
+          analyseData.POIDS_BRISURES || 0,
+          analyseData.POIDS_DECHET || 0,
+          analyseData.POIDS_CRABOT || 0,
+          analyseData.POIDS_ETRANGERES || 0,
+          analyseData.GRAINAGE || 0,
+          analyseData.TAUXHUMIDITE || 0,
+          analyseData.MOISIE_CALCULE || 0,
+          analyseData.MITEE_CALCULE || 0,
+          analyseData.ARDOISEE_CALCULE || 0,
+          analyseData.PLATE_CALCULE || 0,
+          analyseData.GERMEE_CALCULE || 0,
+          analyseData.VIOLETTE_CALCULE || 0,
+          analyseData.NUM_LOTS || '',
+          analyseData.RAISONSOCIALE_EXPORTATEUR || '',
+          analyseData.LIBELLE_PRODUIT || '',
+          analyseData.CAMP_DEMANDE || '',
+          analyseData.VILLE_DEMANDE || ''
+        ], (err, result) => {
+          if (err) reject(err);
+          else resolve(result);
+        });
+      });
+      
+      // Mettre à jour le statut dans kko_analyses
+      await new Promise((resolve, reject) => {
+        pool.query(
+          "UPDATE kko_analyses SET VALIDER_ANALYSE_KKO = ? WHERE ID_ANALYSE_KKO = ?",
+          [validerInt, analyseId],
+          (err, result) => {
+            if (err) reject(err);
+            else resolve(result);
+          }
+        );
+      });
+    }
+    
+    res.json({ 
+      success: true, 
+      message: `${analysesIds.length} analyse(s) ${valider ? 'validée(s)' : 'rejetée(s)'} et enregistrée(s) avec succès` 
+    });
+    
+  } catch (error) {
+    console.error("Erreur validation analyses:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Route pour récupérer les analyses validées
+app.get('/api/analyses/validees', (req, res) => {
+  const { 
+    dateDebut, dateFin, campagne, ville, exportateur, 
+    statut, limit 
+  } = req.query;
+  
+  let sql = `
+    SELECT 
+      av.*,
+      u.NOM_UTILISATEURS as NOM_VALIDATEUR,
+      ka.DATE_ANALYSE_KKO,
+      ua.NOM_UTILISATEURS as NOM_ANALYSEUR
+    FROM analysevalider av
+    LEFT JOIN utilisateurs u ON av.VALIDATEUR_ID = u.ID_UTILISATEURS
+    LEFT JOIN kko_analyses ka ON av.ID_ANALYSE_KKO = ka.ID_ANALYSE_KKO
+    LEFT JOIN utilisateurs ua ON ka.ANALYSEUR_ANALYSE_KKO = ua.ID_UTILISATEURS
+    WHERE 1=1
+  `;
+  
+  const params = [];
+  
+  // Filtres
+  if (dateDebut) {
+    sql += " AND DATE(av.DATE_VALIDATION) >= ?";
+    params.push(dateDebut);
+  }
+  
+  if (dateFin) {
+    sql += " AND DATE(av.DATE_VALIDATION) <= ?";
+    params.push(dateFin);
+  }
+  
+  if (campagne && campagne !== 'all') {
+    sql += " AND av.CAMP_DEMANDE = ?";
+    params.push(campagne);
+  }
+  
+  if (ville && ville !== 'all') {
+    sql += " AND av.VILLE_DEMANDE = ?";
+    params.push(ville);
+  }
+  
+  if (exportateur && exportateur !== 'all') {
+    sql += " AND av.RAISONSOCIALE_EXPORTATEUR LIKE ?";
+    params.push(`%${exportateur}%`);
+  }
+  
+  if (statut && statut !== 'all') {
+    sql += " AND av.STATUT = ?";
+    params.push(statut);
+  }
+  
+  sql += " ORDER BY av.DATE_VALIDATION DESC";
+  
+  // Limite
+  if (limit) {
+    sql += " LIMIT ?";
+    params.push(parseInt(limit));
+  } else {
+    sql += " LIMIT 100";
+  }
+  
+  pool.query(sql, params, (err, results) => {
+    if (err) {
+      console.error("Erreur récupération analyses validées:", err);
+      return res.status(500).json({ error: err.message });
     }
     res.json(results || []);
   });
@@ -942,7 +1936,7 @@ app.get('/api/codes-secrets', (req, res) => {
       e.RAISONSOCIALE_EXPORTATEUR as exportateur
     FROM registre_codification rc
     LEFT JOIN resgistre_sondage rs ON rc.ID_SONDAGE = rs.ID_SONDAGE
-    LEFT JOIN lots l ON rs.ID_LOT = l.ID_LOTS
+    LEFT JOIN lots l ON rs.ID_Lot = l.ID_LOTS
     LEFT JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
     LEFT JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
     LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
@@ -1084,7 +2078,7 @@ app.get('/api/codes-secrets/lot/:lotId/premier-code', (req, res) => {
     SELECT COUNT(*) as count
     FROM registre_codification rc
     JOIN resgistre_sondage rs ON rc.ID_SONDAGE = rs.ID_SONDAGE
-    WHERE rs.ID_LOT = ? AND rc.LIBELLE_CODIFICATION = '1er code'
+    WHERE rs.ID_Lot = ? AND rc.LIBELLE_CODIFICATION = '1er code'
   `, [lotId], (err, results) => {
     if (err) {
       console.error("Erreur vérification 1er code:", err);
@@ -1102,7 +2096,7 @@ app.get('/api/codes-secrets/lot/:lotId/reprises-count', (req, res) => {
     SELECT COUNT(*) as count
     FROM registre_codification rc
     JOIN resgistre_sondage rs ON rc.ID_SONDAGE = rs.ID_SONDAGE
-    WHERE rs.ID_LOT = ? AND rc.LIBELLE_CODIFICATION = 'Reprise'
+    WHERE rs.ID_Lot = ? AND rc.LIBELLE_CODIFICATION = 'Reprise'
   `, [lotId], (err, results) => {
     if (err) {
       console.error("Erreur comptage reprises:", err);
@@ -1130,7 +2124,7 @@ app.post('/api/codes-secrets/generer-premier', async (req, res) => {
           p.LIBELLE_PRODUIT,
           e.RAISONSOCIALE_EXPORTATEUR
         FROM lots l
-        LEFT JOIN resgistre_sondage rs ON l.ID_LOTS = rs.ID_LOT
+        LEFT JOIN resgistre_sondage rs ON l.ID_LOTS = rs.ID_Lot
         LEFT JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
         LEFT JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
         LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
@@ -1272,7 +2266,7 @@ app.post('/api/codes-secrets/generer-reprise', async (req, res) => {
           p.LIBELLE_PRODUIT,
           e.RAISONSOCIALE_EXPORTATEUR
         FROM lots l
-        LEFT JOIN resgistre_sondage rs ON l.ID_LOTS = rs.ID_LOT
+        LEFT JOIN resgistre_sondage rs ON l.ID_LOTS = rs.ID_Lot
         LEFT JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
         LEFT JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
         LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
@@ -1446,7 +2440,7 @@ app.post('/api/codes-secrets/generer-selection', async (req, res) => {
             SELECT COUNT(*) as count
             FROM registre_codification rc
             JOIN resgistre_sondage rs ON rc.ID_SONDAGE = rs.ID_SONDAGE
-            WHERE rs.ID_LOT = ? AND rc.LIBELLE_CODIFICATION = '1er code'
+            WHERE rs.ID_Lot = ? AND rc.LIBELLE_CODIFICATION = '1er code'
           `, [lotId], (err, results) => {
             if (err) reject(err);
             else resolve(results);
@@ -1466,7 +2460,7 @@ app.post('/api/codes-secrets/generer-selection', async (req, res) => {
                 p.LIBELLE_PRODUIT,
                 e.RAISONSOCIALE_EXPORTATEUR
               FROM lots l
-              LEFT JOIN resgistre_sondage rs ON l.ID_LOTS = rs.ID_LOT
+              LEFT JOIN resgistre_sondage rs ON l.ID_LOTS = rs.ID_Lot
               LEFT JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
               LEFT JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
               LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
@@ -1628,7 +2622,7 @@ app.post('/api/codes-secrets/generer-reprises-selection', async (req, res) => {
             SELECT COUNT(*) as count
             FROM registre_codification rc
             JOIN resgistre_sondage rs ON rc.ID_SONDAGE = rs.ID_SONDAGE
-            WHERE rs.ID_LOT = ? AND rc.LIBELLE_CODIFICATION = '1er code'
+            WHERE rs.ID_Lot = ? AND rc.LIBELLE_CODIFICATION = '1er code'
           `, [lotId], (err, results) => {
             if (err) reject(err);
             else resolve(results);
@@ -1650,7 +2644,7 @@ app.post('/api/codes-secrets/generer-reprises-selection', async (req, res) => {
               p.LIBELLE_PRODUIT,
               e.RAISONSOCIALE_EXPORTATEUR
             FROM lots l
-            LEFT JOIN resgistre_sondage rs ON l.ID_LOTS = rs.ID_LOT
+            LEFT JOIN resgistre_sondage rs ON l.ID_LOTS = rs.ID_Lot
             LEFT JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
             LEFT JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
             LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
@@ -1793,6 +2787,7 @@ app.post('/api/codes-secrets/imprimer', (req, res) => {
   // Récupérer les infos du code
   pool.query(`
     SELECT 
+      rc.ID_CODIFICATION,
       rc.CODE_SECRET_CODIFICATION,
       rc.DATE_ENREG_CODIFICATION,
       rc.LIBELLE_CODIFICATION,
@@ -1801,7 +2796,7 @@ app.post('/api/codes-secrets/imprimer', (req, res) => {
       e.RAISONSOCIALE_EXPORTATEUR as exportateur
     FROM registre_codification rc
     LEFT JOIN resgistre_sondage rs ON rc.ID_SONDAGE = rs.ID_SONDAGE
-    LEFT JOIN lots l ON rs.ID_LOT = l.ID_LOTS
+    LEFT JOIN lots l ON rs.ID_Lot = l.ID_LOTS
     LEFT JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
     LEFT JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
     LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
@@ -2030,7 +3025,7 @@ app.post('/api/codes-secrets/imprimer-selection', (req, res) => {
       e.RAISONSOCIALE_EXPORTATEUR as exportateur
     FROM registre_codification rc
     LEFT JOIN resgistre_sondage rs ON rc.ID_SONDAGE = rs.ID_SONDAGE
-    LEFT JOIN lots l ON rs.ID_LOT = l.ID_LOTS
+    LEFT JOIN lots l ON rs.ID_Lot = l.ID_LOTS
     LEFT JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
     LEFT JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
     LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
@@ -2306,7 +3301,7 @@ app.get('/api/test-data', (req, res) => {
       rc.CODE_SECRET_CODIFICATION,
       rc.LIBELLE_CODIFICATION as type_code
     FROM lots l
-    LEFT JOIN resgistre_sondage rs ON l.ID_LOTS = rs.ID_LOT
+    LEFT JOIN resgistre_sondage rs ON l.ID_LOTS = rs.ID_Lot
     LEFT JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
     LEFT JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
     LEFT JOIN registre_codification rc ON rc.ID_SONDAGE = rs.ID_SONDAGE
@@ -2343,9 +3338,20 @@ app.listen(PORT, () => {
   console.log('- POST /api/codes-secrets/imprimer (imprimer code - 1 page)');
   console.log('- POST /api/codes-secrets/imprimer-selection (imprimer sélection - 1 code par page)');
   console.log('');
+  console.log('=== Analyses Laboratoire ===');
+  console.log('- GET  /api/codes-secrets/valider/:code (valider code secret)');
+  console.log('- POST /api/analyses/cacao (enregistrer analyse cacao - CORRIGÉ)');
+  console.log('- POST /api/analyses/cafe (enregistrer analyse café)');
+  console.log('');
   console.log('=== Utilitaires ===');
   console.log('- GET  /api/init-database (initialiser tables)');
   console.log('- GET  /api/test-data (données de test)');
+  console.log('=== Gestion des résultats d\'analyses ===');
+console.log('- GET  /api/analyses/cacao (récupérer analyses avec filtres)');
+console.log('- GET  /api/analyses/:id (récupérer une analyse spécifique)');
+console.log('- POST /api/analyses/valider (valider/rejeter analyses)');
+console.log('- PUT  /api/analyses/:id (modifier une analyse)');
+console.log('- DELETE /api/analyses/:id (supprimer une analyse)');
   console.log('');
   console.log('====================================');
 });

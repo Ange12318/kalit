@@ -35,7 +35,7 @@ const features = [
   },
   {
     icon: <TestTubeIcon className="h-10 w-10 text-green-500" />,
-    title: 'Échantillons',
+    title: 'Echantillonnage',
     description: 'Sondage et brassage des échantillons',
     navTarget: 'echantillons'
   },

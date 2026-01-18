@@ -84,7 +84,7 @@ const DemandesAutorites: React.FC<{
           fetch('http://localhost:5000/api/exportateurs').then(r => r.json()),
           fetch('http://localhost:5000/api/produits').then(r => r.json()),
           fetch('http://localhost:5000/api/campagnes').then(r => r.json()),
-          fetch('http://localhost:5000/api/postes-controle').then(r => r.json())
+          fetch('http://localhost:5000/api/postes-controle').then(r => r.json()),
         ]);
         setExportateurs(exp);
         setProduits(prod);
