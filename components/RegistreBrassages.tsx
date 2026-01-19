@@ -2,7 +2,7 @@
 import React from 'react';
 import {
   BackArrowIcon, CalendarIcon, SearchIcon, RegisterIcon,
-  QuestionMarkCircleIcon, ValidationIcon, PrintIcon, CycleIcon,
+  QuestionMarkCircleIcon, CheckCircleIcon, PrintIcon, CycleIcon,
 } from './Icons';
 
 interface RegistreBrassagesProps {
@@ -120,7 +120,7 @@ const RegistreBrassages: React.FC<RegistreBrassagesProps> = ({ onNavigateBack })
               <select className="w-full form-select"><option>-- Sélectionner --</option><option>Oui</option><option>Non</option></select>
             </div>
             <button className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg shadow-md transition-colors flex items-center gap-2">
-              <ValidationIcon className="h-5 w-5"/>
+              <CheckCircleIcon className="h-5 w-5"/>
               <span>Valider la Décision</span>
             </button>
           </div>

@@ -5,7 +5,7 @@ import {
   InformationCircleIcon,
   KeyIcon,
   PlusIcon,
-  ValidationIcon,
+  CheckCircleIcon,
   RefreshIcon,
 } from './Icons';
 
@@ -268,7 +268,7 @@ const InitialisationCodeJour: React.FC<InitialisationCodeJourProps> = ({ onNavig
               <p className="text-xs font-semibold text-gray-500 uppercase">STATUT</p>
               {isActive ? (
                 <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800">
-                  <ValidationIcon className="h-4 w-4 mr-1.5"/>
+                  <CheckCircleIcon className="h-4 w-4 mr-1.5"/>
                   Actif (24h)
                 </span>
               ) : (
@@ -302,7 +302,7 @@ const InitialisationCodeJour: React.FC<InitialisationCodeJourProps> = ({ onNavig
                 disabled={loading}
                 className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-8 rounded-lg shadow-md transition-colors flex items-center gap-2"
               >
-                <ValidationIcon className="h-5 w-5"/>
+                <CheckCircleIcon className="h-5 w-5"/>
                 <span>{loading ? 'Initialisation...' : 'Activer le Code du Jour'}</span>
               </button>
             ) : (

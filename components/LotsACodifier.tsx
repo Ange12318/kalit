@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  BackArrowIcon, CalendarIcon, SearchIcon, ValidationIcon, PrintIcon,
+  BackArrowIcon, CalendarIcon, SearchIcon, CheckCircleIcon, PrintIcon,
   BoxIcon, KeyIcon, QuestionMarkCircleIcon, RefreshIcon, SparklesIcon,
   FilterIcon, 
 } from './Icons';

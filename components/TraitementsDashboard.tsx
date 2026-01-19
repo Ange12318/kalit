@@ -5,7 +5,6 @@ import {
   ModuleIcon,
   AuthorityIcon,
   UsersIcon,
-  ValidationIcon,
   ExportIcon,
   DocumentIcon,
   BackArrowIcon
@@ -36,14 +35,14 @@ const traitementsFeatures = [
       navigateTo: 'demandesClients'
     },
     {
-      icon: <ValidationIcon className="h-10 w-10 text-green-500" />,
+      icon: <DocumentIcon className="h-10 w-10 text-green-500" />,
       title: 'Validation Résultats Cacao',
       description: 'Validation des analyses qualité cacao',
       badgeText: '8 En attente',
       navigateTo: 'validationCacao'
     },
     {
-      icon: <ValidationIcon className="h-10 w-10 text-green-500" />,
+      icon: <DocumentIcon className="h-10 w-10 text-green-500" />,
       title: 'Validation Résultats Café',
       description: 'Validation des analyses qualité café',
       badgeText: '5 En attente',

@@ -108,6 +108,9 @@ interface CacaoData {
   
   // Nbre fèves pour défauts
   nbreFevesDefauts: string;
+  
+  // Raison du classement SG
+  raisonSG: string;
 }
 
 // Interface pour les données Café
@@ -1082,6 +1085,64 @@ const CacaoForm: React.FC<{
           </div>
         </div>
         
+        {/* Informations sur les tolérances */}
+        <div className="mt-4">
+          <label className="block text-sm font-medium text-gray-700">Vérification des tolérances</label>
+          <div className="text-sm text-gray-600 mt-1 space-y-2">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              <div className={`p-2 rounded ${parseFloat(cacaoData.tauxHumiditePourcentage || '0') > 8.0 ? 'bg-red-100 border border-red-200' : 'bg-green-50'}`}>
+                <span className="font-semibold">Humidité:</span> {cacaoData.tauxHumiditePourcentage || '0.000'}% / 8.0%
+                {parseFloat(cacaoData.tauxHumiditePourcentage || '0') > 8.0 && (
+                  <span className="text-red-600 text-xs block">{'>'}  Tolérance!</span>
+                )}
+              </div>
+              <div className={`p-2 rounded ${parseFloat(calculerPourcentageEtrangeres()) > 1.0 ? 'bg-red-100 border border-red-200' : 'bg-green-50'}`}>
+                <span className="font-semibold">M. Étrangères:</span> {calculerPourcentageEtrangeres()}% / 1.0%
+                {parseFloat(calculerPourcentageEtrangeres()) > 1.0 && (
+                  <span className="text-red-600 text-xs block">{'>'}  Tolérance!</span>
+                )}
+              </div>
+              <div className={`p-2 rounded ${parseFloat(calculerPourcentageBrisures()) > 2.0 ? 'bg-red-100 border border-red-200' : 'bg-green-50'}`}>
+                <span className="font-semibold">Brisures:</span> {calculerPourcentageBrisures()}% / 2.0%
+                {parseFloat(calculerPourcentageBrisures()) > 2.0 && (
+                  <span className="text-red-600 text-xs block">{'>'}  Tolérance!</span>
+                )}
+              </div>
+              <div className={`p-2 rounded ${parseFloat(calculerPourcentageCrabot()) > 2.0 ? 'bg-red-100 border border-red-200' : 'bg-green-50'}`}>
+                <span className="font-semibold">Crabots:</span> {calculerPourcentageCrabot()}% / 2.0%
+                {parseFloat(calculerPourcentageCrabot()) > 2.0 && (
+                  <span className="text-red-600 text-xs block">{'>'}  Tolérance!</span>
+                )}
+              </div>
+              <div className={`p-2 rounded ${parseFloat(calculerPourcentageDechet()) > 1.5 ? 'bg-red-100 border border-red-200' : 'bg-green-50'}`}>
+                <span className="font-semibold">Déchets:</span> {calculerPourcentageDechet()}% / 1.5%
+                {parseFloat(calculerPourcentageDechet()) > 1.5 && (
+                  <span className="text-red-600 text-xs block">{'>'}  Tolérance!</span>
+                )}
+              </div>
+            </div>
+            
+            {cacaoData.normeIvoirienne === 'SG (Sous Grade)' && cacaoData.raisonSG && (
+              <div className="mt-2 p-3 bg-yellow-50 border border-yellow-200 rounded">
+                <span className="font-semibold text-yellow-800">Raison du classement SG:</span>
+                <p className="text-yellow-700 text-sm mt-1">
+                  {cacaoData.raisonSG}
+                </p>
+              </div>
+            )}
+            
+            {cacaoData.normeIvoirienne !== 'SG (Sous Grade)' && cacaoData.normeInternationale && (
+              <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded">
+                <span className="font-semibold text-blue-800">Priorité Norme Ivoirienne:</span>
+                <p className="text-blue-700 text-sm mt-1">
+                  Le grade final est déterminé par la norme ivoirienne ({cacaoData.normeIvoirienne}), 
+                  même si la norme internationale donne {cacaoData.normeInternationale}.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+        
         <div className="mt-4">
           <label className="block text-sm font-medium text-gray-700">Remarque</label>
           <textarea 
@@ -1357,7 +1418,10 @@ const AnalysesLaboratoire: React.FC<AnalysesLaboratoireProps> = ({ onNavigateBac
     violettePourcentage: '',
     
     // Nbre fèves pour défauts
-    nbreFevesDefauts: '300'
+    nbreFevesDefauts: '300',
+    
+    // Raison du classement SG
+    raisonSG: ''
   });
   
   // États pour le formulaire CAFÉ
@@ -1489,7 +1553,7 @@ const AnalysesLaboratoire: React.FC<AnalysesLaboratoireProps> = ({ onNavigateBac
     return pourcentage.toFixed(3);
   }, [cacaoData.poidsCrabot]);
   
-  // Fonction pour calculer la classification automatique
+  // Fonction pour calculer la classification automatique avec tolérances
   const calculerClassification = useCallback(() => {
     // Récupérer les pourcentages des défauts
     const moisiePourc = parseFloat(calculerPourcentageDefaut(
@@ -1517,21 +1581,67 @@ const AnalysesLaboratoire: React.FC<AnalysesLaboratoireProps> = ({ onNavigateBac
       cacaoData.nbreFevesDefauts
     )) || 0;
     
+    // Calculer les pourcentages pour les tolérances
+    const tauxHumiditePourc = parseFloat(calculerMoyenneHumidite()) || 0;
+    const pourcentageEtrangeres = parseFloat(calculerPourcentageEtrangeres()) || 0;
+    const pourcentageBrisures = parseFloat(calculerPourcentageBrisures()) || 0;
+    const pourcentageCrabot = parseFloat(calculerPourcentageCrabot()) || 0;
+    const pourcentageDechet = parseFloat(calculerPourcentageDechet()) || 0;
+    
     const defectueusesPourc = germeePourc + platePourc + miteePourc;
+    const defectueusesFCC = moisiePourc + miteePourc;
+    
+    // Vérifier les tolérances qui imposent automatiquement SG si dépassées
+    let toleranceSG = false;
+    const tolerancesDepassees = [];
+    
+    if (tauxHumiditePourc > 8.0) {
+      toleranceSG = true;
+      tolerancesDepassees.push(`Humidité (${tauxHumiditePourc.toFixed(2)}% > 8.0%)`);
+    }
+    
+    if (pourcentageEtrangeres > 1.0) {
+      toleranceSG = true;
+      tolerancesDepassees.push(`Matières étrangères (${pourcentageEtrangeres.toFixed(2)}% > 1.0%)`);
+    }
+    
+    if (pourcentageBrisures > 2.0) {
+      toleranceSG = true;
+      tolerancesDepassees.push(`Brisures (${pourcentageBrisures.toFixed(2)}% > 2.0%)`);
+    }
+    
+    if (pourcentageCrabot > 2.0) {
+      toleranceSG = true;
+      tolerancesDepassees.push(`Crabots (${pourcentageCrabot.toFixed(2)}% > 2.0%)`);
+    }
+    
+    if (pourcentageDechet > 1.5) {
+      toleranceSG = true;
+      tolerancesDepassees.push(`Déchets (${pourcentageDechet.toFixed(2)}% > 1.5%)`);
+    }
     
     // Calcul norme ivoirienne
     let normeIvoirienne = '';
-    if (moisiePourc <= 3 && ardoiseePourc <= 3 && defectueusesPourc <= 3) {
+    let raisonSG = '';
+    
+    if (toleranceSG) {
+      normeIvoirienne = 'SG (Sous Grade)';
+      raisonSG = `Tolérances dépassées: ${tolerancesDepassees.join(', ')}`;
+    } else if (moisiePourc <= 3 && ardoiseePourc <= 3 && defectueusesPourc <= 3) {
       normeIvoirienne = 'G1';
     } else if (moisiePourc <= 4 && ardoiseePourc <= 8 && defectueusesPourc <= 6) {
       normeIvoirienne = 'G2';
     } else {
       normeIvoirienne = 'SG (Sous Grade)';
+      const raisons = [];
+      if (moisiePourc > 4) raisons.push(`Moisies (${moisiePourc.toFixed(2)}% > 4%)`);
+      if (ardoiseePourc > 8) raisons.push(`Ardoisées (${ardoiseePourc.toFixed(2)}% > 8%)`);
+      if (defectueusesPourc > 6) raisons.push(`Défectueuses (${defectueusesPourc.toFixed(2)}% > 6%)`);
+      raisonSG = raisons.join(', ');
     }
     
     // Calcul norme internationale (FCC)
     let normeInternationale = '';
-    const defectueusesFCC = moisiePourc + miteePourc;
     
     if (defectueusesFCC <= 5 && ardoiseePourc <= 5) {
       normeInternationale = 'GF (Good Fermented)';
@@ -1541,10 +1651,26 @@ const AnalysesLaboratoire: React.FC<AnalysesLaboratoireProps> = ({ onNavigateBac
       normeInternationale = 'FAQ (Fair Average Quality)';
     }
     
-    // Déterminer si conforme (par défaut on considère conforme si G1 ou GF)
-    const conforme = normeIvoirienne === 'G1' || normeInternationale === 'GF (Good Fermented)';
+    // Déterminer si conforme (par défaut on considère conforme si G1 ou G2)
+    // Priorité à la norme ivoirienne: si SG en norme ivoirienne, alors non conforme
+    let conforme = false;
+    if (normeIvoirienne === 'G1' || normeIvoirienne === 'G2') {
+      conforme = true;
+    }
     
-    return { normeIvoirienne, normeInternationale, conforme };
+    return { 
+      normeIvoirienne, 
+      normeInternationale, 
+      conforme,
+      raisonSG,
+      tolerances: {
+        tauxHumidite: tauxHumiditePourc,
+        matieresEtrangeres: pourcentageEtrangeres,
+        brisures: pourcentageBrisures,
+        crabot: pourcentageCrabot,
+        dechet: pourcentageDechet
+      }
+    };
   }, [
     cacaoData.moisiePlateau1, cacaoData.moisiePlateau2, cacaoData.moisiePlateau3,
     cacaoData.ardoiseePlateau1, cacaoData.ardoiseePlateau2, cacaoData.ardoiseePlateau3,
@@ -1552,7 +1678,12 @@ const AnalysesLaboratoire: React.FC<AnalysesLaboratoireProps> = ({ onNavigateBac
     cacaoData.platePlateau1, cacaoData.platePlateau2, cacaoData.platePlateau3,
     cacaoData.miteePlateau1, cacaoData.miteePlateau2, cacaoData.miteePlateau3,
     cacaoData.nbreFevesDefauts,
-    calculerPourcentageDefaut
+    calculerPourcentageDefaut,
+    calculerMoyenneHumidite,
+    calculerPourcentageEtrangeres,
+    calculerPourcentageBrisures,
+    calculerPourcentageCrabot,
+    calculerPourcentageDechet
   ]);
 
   // Mettre à jour la classification automatiquement
@@ -1562,15 +1693,18 @@ const AnalysesLaboratoire: React.FC<AnalysesLaboratoireProps> = ({ onNavigateBac
     // Vérifier si les valeurs ont changé avant de mettre à jour l'état
     if (classification.normeIvoirienne !== cacaoData.normeIvoirienne ||
         classification.normeInternationale !== cacaoData.normeInternationale ||
-        classification.conforme !== cacaoData.conforme) {
+        classification.conforme !== cacaoData.conforme ||
+        classification.raisonSG !== cacaoData.raisonSG) {
       setCacaoData(prev => ({
         ...prev,
         normeIvoirienne: classification.normeIvoirienne,
         normeInternationale: classification.normeInternationale,
-        conforme: classification.conforme
+        conforme: classification.conforme,
+        raisonSG: classification.raisonSG,
+        tauxHumiditePourcentage: classification.tolerances.tauxHumidite.toFixed(3)
       }));
     }
-  }, [calculerClassification, cacaoData.normeIvoirienne, cacaoData.normeInternationale, cacaoData.conforme]);
+  }, [calculerClassification, cacaoData.normeIvoirienne, cacaoData.normeInternationale, cacaoData.conforme, cacaoData.raisonSG]);
   
   // Gestionnaires optimisés avec useCallback
   const handleCacaoChange = useCallback((field: keyof CacaoData, value: string) => {
@@ -1587,46 +1721,63 @@ const AnalysesLaboratoire: React.FC<AnalysesLaboratoireProps> = ({ onNavigateBac
     }));
   }, []);
   
-  // Charger les informations du lot
-  const chargerLot = async () => {
-    if (!codeSecret.trim()) {
-      setError('Veuillez entrer un code secret');
-      return;
-    }
-    
-    setLoading(true);
-    setError('');
-    setSuccess('');
-    
-    try {
-      const response = await fetch(`http://localhost:5000/api/codes-secrets/valider/${codeSecret}`);
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Code secret invalide');
-      }
-      
-      const data = await response.json();
-      setLotInfo(data);
-      
-      // Définir l'onglet actif selon le produit
-      if (data.ID_PRODUIT === 'KKO') {
-        setActiveTab('cacao');
-      } else if (data.ID_PRODUIT === 'KFE') {
-        setActiveTab('cafe');
-      }
-      
-      setSuccess(`Échantillon chargé avec succès`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erreur lors du chargement');
-      setLotInfo(null);
-    } finally {
-      setLoading(false);
-    }
-  };
+// Charger les informations du lot
+const chargerLot = async () => {
+  if (!codeSecret.trim()) {
+    setError('Veuillez entrer un code secret');
+    return;
+  }
   
-  // Enregistrer l'analyse CACAO
-  const enregistrerAnalyseCacao = async () => {
+  setLoading(true);
+  setError('');
+  setSuccess('');
+  
+  try {
+    const response = await fetch(`http://localhost:5000/api/codes-secrets/valider/${codeSecret}`);
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Code secret invalide');
+    }
+    
+    const data = await response.json();
+    
+    // Vérifier si ce lot a déjà été analysé et validé
+    const checkValidationResponse = await fetch(`http://localhost:5000/api/analyses/validees?codeSecret=${codeSecret}`);
+    
+    if (checkValidationResponse.ok) {
+      const validationData = await checkValidationResponse.json();
+      const validees = validationData.data || validationData;
+      
+      if (validees.length > 0) {
+        // Ce lot a déjà été validé
+        const validationInfo = validees[0];
+        setError(`Ce lot a déjà été analysé et validé le ${new Date(validationInfo.DATE_VALIDATION).toLocaleDateString('fr-FR')}. Statut: ${validationInfo.STATUT}`);
+        setLotInfo(null);
+        return;
+      }
+    }
+    
+    setLotInfo(data);
+    
+    // Définir l'onglet actif selon le produit
+    if (data.ID_PRODUIT === 'KKO') {
+      setActiveTab('cacao');
+    } else if (data.ID_PRODUIT === 'KFE') {
+      setActiveTab('cafe');
+    }
+    
+    setSuccess(`Échantillon chargé avec succès`);
+  } catch (err) {
+    setError(err instanceof Error ? err.message : 'Erreur lors du chargement');
+    setLotInfo(null);
+  } finally {
+    setLoading(false);
+  }
+};
+
+// Enregistrer l'analyse CACAO
+const enregistrerAnalyseCacao = async () => {
     if (!lotInfo) {
       setError('Aucun lot chargé');
       return;
@@ -1664,77 +1815,80 @@ const AnalysesLaboratoire: React.FC<AnalysesLaboratoireProps> = ({ onNavigateBac
       // Calculer la moyenne humidité
       const moyenneHumiditeCalcul = calculerMoyenneHumidite();
       
+      // Préparer les données pour l'envoi
+      const donneesEnvoi = {
+        idCodification: lotInfo.ID_CODIFICATION,
+        
+        // Formation générale
+        poidsDeclaration: cacaoData.poidsDeclaration,
+        poidsEchantillon: cacaoData.poidsEchantillon,
+        poidsTotalEchantillon: cacaoData.poidsTotalEchantillon,
+        
+        // Première partie - Tableau des analyses
+        fevesEntieres: cacaoData.fevesEntieres,
+        fevesPlates: cacaoData.fevesPlates,
+        poidsDechet: cacaoData.poidsDechet,
+        poidsFevesPlates: cacaoData.poidsFevesPlates,
+        poidsFevesEntieres: poidsFevesEntieresCalcul,
+        
+        // Épreuve à la loupe
+        poidsBrisures: cacaoData.poidsBrisures,
+        poidsEtrangeres: cacaoData.poidsEtrangeres,
+        poidsFevesBrisees: cacaoData.poidsFevesBrisees,
+        poidsCoques: '0', // Toujours 0 comme dans vos données
+        poidsCrabot: cacaoData.poidsCrabot,
+        
+        // Détermination du grainage
+        totalFevesEntieres: totalFevesEntieresCalcul,
+        grainage: grainageCalcul,
+        poidsNombreFevesEntieres: poidsNombreFevesEntieresCalcul,
+        
+        // Taux d'humidité
+        lectureHumidite1: cacaoData.lectureHumidite1,
+        lectureHumidite2: cacaoData.lectureHumidite2,
+        lectureHumidite3: cacaoData.lectureHumidite3,
+        tauxHumiditePourcentage: moyenneHumiditeCalcul,
+        
+        // Classification
+        normeIvoirienne: classification.normeIvoirienne,
+        normeInternationale: classification.normeInternationale,
+        conforme: classification.conforme,
+        remarque: cacaoData.remarque,
+        
+        // Défauts
+        moisiePlateau1: cacaoData.moisiePlateau1,
+        moisiePlateau2: cacaoData.moisiePlateau2,
+        moisiePlateau3: cacaoData.moisiePlateau3,
+        
+        miteePlateau1: cacaoData.miteePlateau1,
+        miteePlateau2: cacaoData.miteePlateau2,
+        miteePlateau3: cacaoData.miteePlateau3,
+        
+        ardoiseePlateau1: cacaoData.ardoiseePlateau1,
+        ardoiseePlateau2: cacaoData.ardoiseePlateau2,
+        ardoiseePlateau3: cacaoData.ardoiseePlateau3,
+        
+        platePlateau1: cacaoData.platePlateau1,
+        platePlateau2: cacaoData.platePlateau2,
+        platePlateau3: cacaoData.platePlateau3,
+        
+        germeePlateau1: cacaoData.germeePlateau1,
+        germeePlateau2: cacaoData.germeePlateau2,
+        germeePlateau3: cacaoData.germeePlateau3,
+        
+        violettePlateau1: cacaoData.violettePlateau1,
+        violettePlateau2: cacaoData.violettePlateau2,
+        violettePlateau3: cacaoData.violettePlateau3,
+        
+        nbreFevesDefauts: cacaoData.nbreFevesDefauts,
+        
+        analyseurId: 7
+      };
+      
       const response = await fetch('http://localhost:5000/api/analyses/cacao', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          idCodification: lotInfo.ID_CODIFICATION,
-          
-          // Formation générale
-          poidsDeclaration: cacaoData.poidsDeclaration,
-          poidsEchantillon: cacaoData.poidsEchantillon,
-          poidsTotalEchantillon: cacaoData.poidsTotalEchantillon,
-          
-          // Première partie - Tableau des analyses
-          fevesEntieres: cacaoData.fevesEntieres,
-          fevesPlates: cacaoData.fevesPlates,
-          poidsDechet: cacaoData.poidsDechet,
-          poidsFevesPlates: cacaoData.poidsFevesPlates,
-          poidsFevesEntieres: poidsFevesEntieresCalcul,
-          
-          // Épreuve à la loupe
-          poidsBrisures: cacaoData.poidsBrisures,
-          poidsEtrangeres: cacaoData.poidsEtrangeres,
-          poidsFevesBrisees: cacaoData.poidsFevesBrisees,
-          poidsCoques: '0', // Toujours 0 comme dans vos données
-          poidsCrabot: cacaoData.poidsCrabot,
-          
-          // Détermination du grainage
-          totalFevesEntieres: totalFevesEntieresCalcul,
-          grainage: grainageCalcul,
-          poidsNombreFevesEntieres: poidsNombreFevesEntieresCalcul,
-          
-          // Taux d'humidité
-          lectureHumidite1: cacaoData.lectureHumidite1,
-          lectureHumidite2: cacaoData.lectureHumidite2,
-          lectureHumidite3: cacaoData.lectureHumidite3,
-          tauxHumiditePourcentage: moyenneHumiditeCalcul,
-          
-          // Classification
-          normeIvoirienne: classification.normeIvoirienne,
-          normeInternationale: classification.normeInternationale,
-          conforme: classification.conforme,
-          remarque: cacaoData.remarque,
-          
-          // Défauts
-          moisiePlateau1: cacaoData.moisiePlateau1,
-          moisiePlateau2: cacaoData.moisiePlateau2,
-          moisiePlateau3: cacaoData.moisiePlateau3,
-          
-          miteePlateau1: cacaoData.miteePlateau1,
-          miteePlateau2: cacaoData.miteePlateau2,
-          miteePlateau3: cacaoData.miteePlateau3,
-          
-          ardoiseePlateau1: cacaoData.ardoiseePlateau1,
-          ardoiseePlateau2: cacaoData.ardoiseePlateau2,
-          ardoiseePlateau3: cacaoData.ardoiseePlateau3,
-          
-          platePlateau1: cacaoData.platePlateau1,
-          platePlateau2: cacaoData.platePlateau2,
-          platePlateau3: cacaoData.platePlateau3,
-          
-          germeePlateau1: cacaoData.germeePlateau1,
-          germeePlateau2: cacaoData.germeePlateau2,
-          germeePlateau3: cacaoData.germeePlateau3,
-          
-          violettePlateau1: cacaoData.violettePlateau1,
-          violettePlateau2: cacaoData.violettePlateau2,
-          violettePlateau3: cacaoData.violettePlateau3,
-          
-          nbreFevesDefauts: cacaoData.nbreFevesDefauts,
-          
-          analyseurId: 7
-        })
+        body: JSON.stringify(donneesEnvoi)
       });
       
       if (!response.ok) {
@@ -1743,7 +1897,7 @@ const AnalysesLaboratoire: React.FC<AnalysesLaboratoireProps> = ({ onNavigateBac
       }
       
       const result = await response.json();
-      setSuccess(`Analyse cacao enregistrée avec succès ! (ID: ${result.idAnalyse})`);
+      setSuccess(`Analyse cacao enregistrée avec succès ! (ID: ${result.idAnalyse}) - Classé: ${classification.normeIvoirienne}`);
       
       // Réinitialiser le formulaire
       setCacaoData({
@@ -1804,7 +1958,8 @@ const AnalysesLaboratoire: React.FC<AnalysesLaboratoireProps> = ({ onNavigateBac
         violettePlateau3: '',
         violetteTotal: '',
         violettePourcentage: '',
-        nbreFevesDefauts: '300'
+        nbreFevesDefauts: '300',
+        raisonSG: ''
       });
       setCodeSecret('');
       setLotInfo(null);

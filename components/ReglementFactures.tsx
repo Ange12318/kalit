@@ -4,7 +4,7 @@ import {
   BackArrowIcon,
   CreditCardIcon,
   EmptyBoxIcon,
-  ValidationIcon
+  CheckCircleIcon
 } from './Icons';
 
 interface ReglementFacturesProps {
@@ -52,7 +52,7 @@ const ReglementFactures: React.FC<ReglementFacturesProps> = ({ onNavigateBack })
 
         <div className="flex justify-end gap-4 mt-6 pt-6 border-t">
           <button className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg shadow-md flex items-center gap-2">
-            <ValidationIcon className="h-5 w-5"/>
+            <CheckCircleIcon className="h-5 w-5"/>
             Marquer comme réglé
           </button>
         </div>

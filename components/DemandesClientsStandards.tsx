@@ -5,7 +5,7 @@ import {
   BackArrowIcon,
   RefreshIcon,
   PlusIcon,
-  EditIcon,
+  EditIconAlt,
   TrashIcon,
   PrintIcon,
   DownloadIcon,
@@ -76,7 +76,7 @@ const DemandesClientsStandards: React.FC<DemandesClientsStandardsProps> = ({ onN
         <div className="flex flex-wrap gap-2 mb-6 border-t pt-4">
           <button className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-md text-sm transition-colors shadow"><RefreshIcon className="h-4 w-4" /><span>Actualiser</span></button>
           <button className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2 rounded-md text-sm transition-colors shadow"><PlusIcon className="h-4 w-4" /><span>Nouvelle Demande</span></button>
-          <button className="flex items-center space-x-2 bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold px-4 py-2 rounded-md text-sm transition-colors border border-gray-300"><EditIcon className="h-4 w-4" /><span>Modifier</span></button>
+          <button className="flex items-center space-x-2 bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold px-4 py-2 rounded-md text-sm transition-colors border border-gray-300"><EditIconAlt className="h-4 w-4" /><span>Modifier</span></button>
           <button className="flex items-center space-x-2 bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold px-4 py-2 rounded-md text-sm transition-colors border border-gray-300"><TrashIcon className="h-4 w-4" /><span>Supprimer</span></button>
         </div>
 

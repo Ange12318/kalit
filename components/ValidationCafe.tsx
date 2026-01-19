@@ -1,12 +1,12 @@
 
 import React from 'react';
 import {
-  ValidationIcon,
   BackArrowIcon,
   CalendarIcon,
   SearchIcon,
   PrintIcon,
-  ExportIcon
+  ExportIcon,
+  CheckCircleIcon
 } from './Icons';
 
 interface ValidationCafeProps {
@@ -25,7 +25,7 @@ const ValidationCafe: React.FC<ValidationCafeProps> = ({ onNavigateBack }) => {
     <div className="p-6 lg:p-10 space-y-8">
       {/* Header */}
       <div className="bg-[#0d2d53] text-white rounded-t-xl p-6 flex items-center shadow-lg">
-        <ValidationIcon className="h-10 w-10 mr-4" />
+        <CheckCircleIcon className="h-10 w-10 mr-4" />
         <div>
           <h2 className="text-3xl font-bold">Validation Résultats Café</h2>
           <p className="text-blue-200">Validation des analyses de qualité du café</p>

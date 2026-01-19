@@ -5,7 +5,7 @@ import {
   SearchIcon,
   MagnifyingGlassIcon,
   QuestionMarkCircleIcon,
-  ValidationIcon
+  CheckCircleIcon
 } from './Icons';
 
 interface Lot {
@@ -466,7 +466,7 @@ const SondageLots: React.FC<SondageLotsProps> = ({ onNavigateBack }) => {
                   : 'bg-gray-400 cursor-not-allowed'
               } text-white font-bold py-2 px-6 rounded-lg shadow-md transition-colors flex items-center gap-2`}
             >
-              <ValidationIcon className="h-5 w-5"/>
+              <CheckCircleIcon className="h-5 w-5"/>
               <span>
                 {loading ? 'Enregistrement...' : `Valider (${selectedLots.length} lot(s))`}
               </span>

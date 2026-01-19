@@ -135,7 +135,7 @@ app.get('/api/postes-controle', (req, res) => {
     }
     res.json(results || []);
   });
-}); 
+});
 
 // ===============================================
 // NOUVELLE ROUTE : Valider un code secret
@@ -180,7 +180,7 @@ app.get('/api/codes-secrets/valider/:code', (req, res) => {
 });
 
 // ===============================================
-// ROUTE : Enregistrer analyse CACAO (CORRIGÉE)
+// ROUTE : Enregistrer analyse CACAO (ADAPTÉE À VOTRE TABLE)
 // ===============================================
 app.post('/api/analyses/cacao', (req, res) => {
   const {
@@ -254,6 +254,11 @@ app.post('/api/analyses/cacao', (req, res) => {
   
   console.log('Données reçues pour analyse cacao');
   
+  // Vérifier que les données essentielles sont présentes
+  if (!idCodification) {
+    return res.status(400).json({ error: 'idCodification est requis' });
+  }
+  
   // Fonction de calcul pour les défauts
   const calculerTotalDefaut = (p1, p2, p3) => {
     const val1 = parseFloat(p1) || 0;
@@ -270,7 +275,7 @@ app.post('/api/analyses/cacao', (req, res) => {
     return ((totalNum / nbreFevesNum) * 100).toFixed(3);
   };
   
-  // Calculer les totaux et pourcentages
+  // Calculer les totaux et pourcentages des défauts
   const totalMoisie = calculerTotalDefaut(moisiePlateau1, moisiePlateau2, moisiePlateau3);
   const pourcentageMoisie = calculerPourcentage(totalMoisie, nbreFevesDefauts);
   
@@ -289,12 +294,29 @@ app.post('/api/analyses/cacao', (req, res) => {
   const totalViolette = calculerTotalDefaut(violettePlateau1, violettePlateau2, violettePlateau3);
   const pourcentageViolette = calculerPourcentage(totalViolette, nbreFevesDefauts);
   
+  // Calculer les pourcentages pour les tolérances
+  const poidsBrisuresNum = parseFloat(poidsBrisures) || 0;
+  const pourcentageBrisures = ((poidsBrisuresNum / 300) * 100).toFixed(3);
+  
+  const poidsEtrangeresNum = parseFloat(poidsEtrangeres) || 0;
+  const pourcentageEtrangeres = ((poidsEtrangeresNum / 300) * 100).toFixed(3);
+  
+  const poidsCrabotNum = parseFloat(poidsCrabot) || 0;
+  const pourcentageCrabot = ((poidsCrabotNum / 300) * 100).toFixed(3);
+  
+  const poidsDechetNum = parseFloat(poidsDechet) || 0;
+  const poidsDeclarationNum = parseFloat(poidsDeclaration) || 0;
+  const pourcentageDechet = poidsDeclarationNum > 0 ? 
+    ((poidsDechetNum / poidsDeclarationNum) * 100).toFixed(3) : '0.000';
+  
+  const tauxHumiditeNum = parseFloat(tauxHumiditePourcentage) || 0;
+  
   // Calculer le total de l'épreuve à la loupe (sans coques)
   const totalLoupe = (
-    (parseFloat(poidsBrisures) || 0) +
-    (parseFloat(poidsEtrangeres) || 0) +
+    poidsBrisuresNum +
+    poidsEtrangeresNum +
     (parseFloat(poidsFevesBrisees) || 0) +
-    (parseFloat(poidsCrabot) || 0)
+    poidsCrabotNum
   ).toFixed(3);
   
   // Calculer le total humidité
@@ -304,323 +326,231 @@ app.post('/api/analyses/cacao', (req, res) => {
     (parseFloat(lectureHumidite3) || 0)
   ).toFixed(3);
   
+  // Calculer total des défauts (Germées + Plates + Mitées)
+  const pourcentageGermeeNum = parseFloat(pourcentageGermee) || 0;
+  const pourcentagePlateNum = parseFloat(pourcentagePlate) || 0;
+  const pourcentageMiteeNum = parseFloat(pourcentageMitee) || 0;
+  const totalDefectueuses = (pourcentageGermeeNum + pourcentagePlateNum + pourcentageMiteeNum).toFixed(3);
+  
+  // Vérifier les tolérances pour déterminer si SG est imposé
+  let toleranceSG = false;
+  let raisonsTolerance = [];
+  
+  if (tauxHumiditeNum > 8.0) {
+    toleranceSG = true;
+    raisonsTolerance.push(`Humidité (${tauxHumiditeNum.toFixed(2)}% > 8.0%)`);
+  }
+  
+  if (parseFloat(pourcentageEtrangeres) > 1.0) {
+    toleranceSG = true;
+    raisonsTolerance.push(`Matières étrangères (${pourcentageEtrangeres}% > 1.0%)`);
+  }
+  
+  if (parseFloat(pourcentageBrisures) > 2.0) {
+    toleranceSG = true;
+    raisonsTolerance.push(`Brisures (${pourcentageBrisures}% > 2.0%)`);
+  }
+  
+  if (parseFloat(pourcentageCrabot) > 2.0) {
+    toleranceSG = true;
+    raisonsTolerance.push(`Crabots (${pourcentageCrabot}% > 2.0%)`);
+  }
+  
+  if (parseFloat(pourcentageDechet) > 1.5) {
+    toleranceSG = true;
+    raisonsTolerance.push(`Déchets (${pourcentageDechet}% > 1.5%)`);
+  }
+  
   const utilisateurAnalyseur = analyseurId || 7;
   
-  const remarqueEtendue = poidsNombreFevesEntieres 
-    ? `${remarque || ''} | Poids Nb Fèves: ${poidsNombreFevesEntieres}`.trim()
-    : remarque || '';
+  // Ajouter les raisons des tolérances dans la remarque si SG
+  let remarqueEtendue = remarque || '';
+  if (toleranceSG && raisonsTolerance.length > 0) {
+    remarqueEtendue = `Tolérances dépassées: ${raisonsTolerance.join(', ')}. ${remarqueEtendue}`;
+  }
   
-  // Vérifier si la colonne POIDS_NOMBRE_FEVES_ENTIERES existe
-  const sqlVerification = "SHOW COLUMNS FROM kko_analyses LIKE 'POIDS_NOMBRE_FEVES_ENTIERES'";
+  if (poidsNombreFevesEntieres) {
+    remarqueEtendue = `${remarqueEtendue} | Poids Nb Fèves: ${poidsNombreFevesEntieres}`.trim();
+  }
   
-  pool.query(sqlVerification, (err, results) => {
+  // REQUÊTE SQL UNIQUE ET CORRECTE
+  const sql = `
+    INSERT INTO kko_analyses (
+      ID_CODIFICATION,
+      DATE_ANALYSE_KKO,
+      ANALYSEUR_ANALYSE_KKO,
+      
+      POIDS_DECLARATION,
+      POIDS_ECHAN_ANALYSE_KKO,
+      POIDS_TOTAL_ECHANTILLON,
+      
+      FEVES_ENTIERES,
+      FEVES_PLATES,
+      POIDS_DECHET,
+      POIDS_FEVES_PLATES,
+      POIDS_FEVES_ENTIERES,
+      
+      POIDS_BRISURES,
+      POIDS_ETRANGERES,
+      POIDS_FEVES_BRISEES,
+      POIDS_COQUES,
+      POIDS_CRABOT,
+      TOTAL_LOUPE,
+      
+      TOTAL_FEVES_ENTIERES,
+      GRAINAGE,
+      
+      LECTURE_HUMIDITE_1,
+      LECTURE_HUMIDITE_2,
+      LECTURE_HUMIDITE_3,
+      TOTAL_HUMIDITE,
+      TAUXHUMIDITE,
+      
+      NORME_IVOIRIENNE,
+      NORME_INTERNATIONALE,
+      CONFORME,
+      REMARQUE,
+      
+      MOISIE_PLATEAU1, MOISIE_PLATEAU2, MOISIE_PLATEAU3,
+      MOISIE_TOTAL, MOISIE_CALCULE,
+      
+      MITEE_PLATEAU1, MITEE_PLATEAU2, MITEE_PLATEAU3,
+      MITEE_TOTAL, MITEE_CALCULE,
+      
+      ARDOISEE_PLATEAU1, ARDOISEE_PLATEAU2, ARDOISEE_PLATEAU3,
+      ARDOISEE_TOTAL, ARDOISEE_CALCULE,
+      
+      PLATE_PLATEAU1, PLATE_PLATEAU2, PLATE_PLATEAU3,
+      PLATE_TOTAL, PLATE_CALCULE,
+      
+      GERMEE_PLATEAU1, GERMEE_PLATEAU2, GERMEE_PLATEAU3,
+      GERMEE_TOTAL, GERMEE_CALCULE,
+      
+      VIOLETTE_PLATEAU1, VIOLETTE_PLATEAU2, VIOLETTE_PLATEAU3,
+      VIOLETTE_TOTAL, VIOLETTE_CALCULE,
+      
+      NBRE_FEVES_DEFAUTS,
+      TOTAL_DEFECTUEUSES,
+      
+      TAUXBRISURE,
+      TAUXMATIERE,
+      TAUXCRABOT,
+      TAUXDECHETS,
+      
+      NORME_UTILISEE,
+      TYPE_NORME,
+      VALIDER_ANALYSE_KKO
+    ) VALUES (
+      ?, NOW(), ?,
+      ?, ?, ?,
+      ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?, ?,
+      ?, ?,
+      ?, ?, ?, ?, ?,
+      ?, ?, ?, ?,
+      ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?,
+      ?, ?, ?, ?, ?,
+      ?, ?,
+      ?, ?, ?, ?,
+      ?, ?, ?
+    )
+  `;
+  
+  const values = [
+    idCodification,
+    utilisateurAnalyseur,
+    
+    poidsDeclaration || null,
+    poidsEchantillon || null,
+    poidsTotalEchantillon || null,
+    
+    fevesEntieres || null,
+    fevesPlates || null,
+    poidsDechet || null,
+    poidsFevesPlates || null,
+    poidsFevesEntieres || null,
+    
+    poidsBrisures || null,
+    poidsEtrangeres || null,
+    poidsFevesBrisees || null,
+    poidsCoques || '0',
+    poidsCrabot || null,
+    totalLoupe,
+    
+    totalFevesEntieres || null,
+    grainage || null,
+    
+    lectureHumidite1 || null,
+    lectureHumidite2 || null,
+    lectureHumidite3 || null,
+    totalHumidite,
+    tauxHumiditePourcentage || null,
+    
+    normeIvoirienne || '',
+    normeInternationale || '',
+    conforme ? 1 : 0,
+    remarqueEtendue || '',
+    
+    moisiePlateau1 || null, moisiePlateau2 || null, moisiePlateau3 || null,
+    totalMoisie, pourcentageMoisie,
+    
+    miteePlateau1 || null, miteePlateau2 || null, miteePlateau3 || null,
+    totalMitee, pourcentageMitee,
+    
+    ardoiseePlateau1 || null, ardoiseePlateau2 || null, ardoiseePlateau3 || null,
+    totalArdoisee, pourcentageArdoisee,
+    
+    platePlateau1 || null, platePlateau2 || null, platePlateau3 || null,
+    totalPlate, pourcentagePlate,
+    
+    germeePlateau1 || null, germeePlateau2 || null, germeePlateau3 || null,
+    totalGermee, pourcentageGermee,
+    
+    violettePlateau1 || null, violettePlateau2 || null, violettePlateau3 || null,
+    totalViolette, pourcentageViolette,
+    
+    nbreFevesDefauts || '300',
+    totalDefectueuses,
+    
+    pourcentageBrisures,
+    pourcentageEtrangeres,
+    pourcentageCrabot,
+    pourcentageDechet,
+    
+    'Norme Ivoirienne',
+    'GF',
+    0
+  ];
+  
+  console.log('Enregistrement analyse cacao avec', values.length, 'valeurs');
+  
+  pool.query(sql, values, (err, result) => {
     if (err) {
-      console.error("Erreur vérification colonne:", err);
-      return res.status(500).json({ error: 'Erreur vérification table: ' + err.message });
-    }
-    
-    const colonneExiste = results.length > 0;
-    
-    let sql;
-    let values;
-    
-    if (colonneExiste) {
-      // VERSION AVEC COLONNE - 64 colonnes, 64 valeurs
-      sql = `
-        INSERT INTO kko_analyses (
-          ID_CODIFICATION,
-          DATE_ANALYSE_KKO,
-          ANALYSEUR_ANALYSE_KKO,
-          
-          POIDS_DECLARATION,
-          POIDS_ECHAN_ANALYSE_KKO,
-          POIDS_TOTAL_ECHANTILLON,
-          
-          FEVES_ENTIERES,
-          FEVES_PLATES,
-          POIDS_DECHET,
-          POIDS_FEVES_PLATES,
-          POIDS_FEVES_ENTIERES,
-          
-          POIDS_BRISURES,
-          POIDS_ETRANGERES,
-          POIDS_FEVES_BRISEES,
-          POIDS_COQUES,
-          POIDS_CRABOT,
-          TOTAL_LOUPE,
-          
-          TOTAL_FEVES_ENTIERES,
-          GRAINAGE,
-          POIDS_NOMBRE_FEVES_ENTIERES,
-          
-          LECTURE_HUMIDITE_1,
-          LECTURE_HUMIDITE_2,
-          LECTURE_HUMIDITE_3,
-          TOTAL_HUMIDITE,
-          TAUXHUMIDITE,
-          
-          NORME_IVOIRIENNE,
-          NORME_INTERNATIONALE,
-          CONFORME,
-          REMARQUE,
-          
-          MOISIE_PLATEAU1, MOISIE_PLATEAU2, MOISIE_PLATEAU3,
-          MOISIE_TOTAL, MOISIE_CALCULE,
-          
-          MITEE_PLATEAU1, MITEE_PLATEAU2, MITEE_PLATEAU3,
-          MITEE_TOTAL, MITEE_CALCULE,
-          
-          ARDOISEE_PLATEAU1, ARDOISEE_PLATEAU2, ARDOISEE_PLATEAU3,
-          ARDOISEE_TOTAL, ARDOISEE_CALCULE,
-          
-          PLATE_PLATEAU1, PLATE_PLATEAU2, PLATE_PLATEAU3,
-          PLATE_TOTAL, PLATE_CALCULE,
-          
-          GERMEE_PLATEAU1, GERMEE_PLATEAU2, GERMEE_PLATEAU3,
-          GERMEE_TOTAL, GERMEE_CALCULE,
-          
-          VIOLETTE_PLATEAU1, VIOLETTE_PLATEAU2, VIOLETTE_PLATEAU3,
-          VIOLETTE_TOTAL, VIOLETTE_CALCULE,
-          
-          NBRE_FEVES_DEFAUTS,
-          
-          NORME_UTILISEE,
-          TYPE_NORME,
-          VALIDER_ANALYSE_KKO
-        ) VALUES (
-          ?, NOW(), ?,
-          ?, ?, ?,
-          ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?, ?,
-          ?, ?, ?,
-          ?, ?, ?, ?, ?,
-          ?, ?, ?, ?,
-          ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?,
-          ?,
-          'Norme Ivoirienne', 'GF', 0
-        )
-      `;
+      console.error("Erreur enregistrement analyse cacao:", err);
+      console.error("SQL Error:", err.sqlMessage);
+      console.error("Nombre de colonnes dans INSERT:", (sql.match(/,/g) || []).length + 1);
+      console.error("Nombre de valeurs:", values.length);
       
-      values = [
-        idCodification,
-        utilisateurAnalyseur,
-        
-        poidsDeclaration || null,
-        poidsEchantillon || null,
-        poidsTotalEchantillon || null,
-        
-        fevesEntieres || null,
-        fevesPlates || null,
-        poidsDechet || null,
-        poidsFevesPlates || null,
-        poidsFevesEntieres || null,
-        
-        poidsBrisures || null,
-        poidsEtrangeres || null,
-        poidsFevesBrisees || null,
-        poidsCoques || '0',
-        poidsCrabot || null,
-        totalLoupe,
-        
-        totalFevesEntieres || null,
-        grainage || null,
-        poidsNombreFevesEntieres || null,
-        
-        lectureHumidite1 || null,
-        lectureHumidite2 || null,
-        lectureHumidite3 || null,
-        totalHumidite,
-        tauxHumiditePourcentage || null,
-        
-        normeIvoirienne || '',
-        normeInternationale || '',
-        conforme ? 1 : 0,
-        remarqueEtendue || '',
-        
-        moisiePlateau1 || null, moisiePlateau2 || null, moisiePlateau3 || null,
-        totalMoisie, pourcentageMoisie,
-        
-        miteePlateau1 || null, miteePlateau2 || null, miteePlateau3 || null,
-        totalMitee, pourcentageMitee,
-        
-        ardoiseePlateau1 || null, ardoiseePlateau2 || null, ardoiseePlateau3 || null,
-        totalArdoisee, pourcentageArdoisee,
-        
-        platePlateau1 || null, platePlateau2 || null, platePlateau3 || null,
-        totalPlate, pourcentagePlate,
-        
-        germeePlateau1 || null, germeePlateau2 || null, germeePlateau3 || null,
-        totalGermee, pourcentageGermee,
-        
-        violettePlateau1 || null, violettePlateau2 || null, violettePlateau3 || null,
-        totalViolette, pourcentageViolette,
-        
-        nbreFevesDefauts || '300'
-      ];
-    } else {
-      // VERSION SANS COLONNE - 63 colonnes, 63 valeurs
-      sql = `
-        INSERT INTO kko_analyses (
-          ID_CODIFICATION,
-          DATE_ANALYSE_KKO,
-          ANALYSEUR_ANALYSE_KKO,
-          
-          POIDS_DECLARATION,
-          POIDS_ECHAN_ANALYSE_KKO,
-          POIDS_TOTAL_ECHANTILLON,
-          
-          FEVES_ENTIERES,
-          FEVES_PLATES,
-          POIDS_DECHET,
-          POIDS_FEVES_PLATES,
-          POIDS_FEVES_ENTIERES,
-          
-          POIDS_BRISURES,
-          POIDS_ETRANGERES,
-          POIDS_FEVES_BRISEES,
-          POIDS_COQUES,
-          POIDS_CRABOT,
-          TOTAL_LOUPE,
-          
-          TOTAL_FEVES_ENTIERES,
-          GRAINAGE,
-          
-          LECTURE_HUMIDITE_1,
-          LECTURE_HUMIDITE_2,
-          LECTURE_HUMIDITE_3,
-          TOTAL_HUMIDITE,
-          TAUXHUMIDITE,
-          
-          NORME_IVOIRIENNE,
-          NORME_INTERNATIONALE,
-          CONFORME,
-          REMARQUE,
-          
-          MOISIE_PLATEAU1, MOISIE_PLATEAU2, MOISIE_PLATEAU3,
-          MOISIE_TOTAL, MOISIE_CALCULE,
-          
-          MITEE_PLATEAU1, MITEE_PLATEAU2, MITEE_PLATEAU3,
-          MITEE_TOTAL, MITEE_CALCULE,
-          
-          ARDOISEE_PLATEAU1, ARDOISEE_PLATEAU2, ARDOISEE_PLATEAU3,
-          ARDOISEE_TOTAL, ARDOISEE_CALCULE,
-          
-          PLATE_PLATEAU1, PLATE_PLATEAU2, PLATE_PLATEAU3,
-          PLATE_TOTAL, PLATE_CALCULE,
-          
-          GERMEE_PLATEAU1, GERMEE_PLATEAU2, GERMEE_PLATEAU3,
-          GERMEE_TOTAL, GERMEE_CALCULE,
-          
-          VIOLETTE_PLATEAU1, VIOLETTE_PLATEAU2, VIOLETTE_PLATEAU3,
-          VIOLETTE_TOTAL, VIOLETTE_CALCULE,
-          
-          NBRE_FEVES_DEFAUTS,
-          
-          NORME_UTILISEE,
-          TYPE_NORME,
-          VALIDER_ANALYSE_KKO
-        ) VALUES (
-          ?, NOW(), ?,
-          ?, ?, ?,
-          ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?, ?,
-          ?, ?,
-          ?, ?, ?, ?, ?,
-          ?, ?, ?, ?,
-          ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?,
-          ?, ?, ?, ?, ?,
-          ?,
-          'Norme Ivoirienne', 'GF', 0
-        )
-      `;
-      
-      values = [
-        idCodification,
-        utilisateurAnalyseur,
-        
-        poidsDeclaration || null,
-        poidsEchantillon || null,
-        poidsTotalEchantillon || null,
-        
-        fevesEntieres || null,
-        fevesPlates || null,
-        poidsDechet || null,
-        poidsFevesPlates || null,
-        poidsFevesEntieres || null,
-        
-        poidsBrisures || null,
-        poidsEtrangeres || null,
-        poidsFevesBrisees || null,
-        poidsCoques || '0',
-        poidsCrabot || null,
-        totalLoupe,
-        
-        totalFevesEntieres || null,
-        grainage || null,
-        
-        lectureHumidite1 || null,
-        lectureHumidite2 || null,
-        lectureHumidite3 || null,
-        totalHumidite,
-        tauxHumiditePourcentage || null,
-        
-        normeIvoirienne || '',
-        normeInternationale || '',
-        conforme ? 1 : 0,
-        remarqueEtendue || '',
-        
-        moisiePlateau1 || null, moisiePlateau2 || null, moisiePlateau3 || null,
-        totalMoisie, pourcentageMoisie,
-        
-        miteePlateau1 || null, miteePlateau2 || null, miteePlateau3 || null,
-        totalMitee, pourcentageMitee,
-        
-        ardoiseePlateau1 || null, ardoiseePlateau2 || null, ardoiseePlateau3 || null,
-        totalArdoisee, pourcentageArdoisee,
-        
-        platePlateau1 || null, platePlateau2 || null, platePlateau3 || null,
-        totalPlate, pourcentagePlate,
-        
-        germeePlateau1 || null, germeePlateau2 || null, germeePlateau3 || null,
-        totalGermee, pourcentageGermee,
-        
-        violettePlateau1 || null, violettePlateau2 || null, violettePlateau3 || null,
-        totalViolette, pourcentageViolette,
-        
-        nbreFevesDefauts || '300'
-      ];
-    }
-    
-    console.log('Enregistrement analyse cacao avec', values.length, 'valeurs');
-    console.log('Colonne POIDS_NOMBRE_FEVES_ENTIERES existe:', colonneExiste);
-    
-    pool.query(sql, values, (err, result) => {
-      if (err) {
-        console.error("Erreur enregistrement analyse cacao:", err);
-        console.error("SQL Error:", err.sqlMessage);
-        
-        return res.status(500).json({ 
-          error: 'Erreur enregistrement: ' + err.message,
-          sqlError: err.sqlMessage,
-          colonneExiste: colonneExiste
-        });
-      }
-      
-      res.json({ 
-        success: true, 
-        message: 'Analyse cacao enregistrée avec succès',
-        idAnalyse: result.insertId,
-        colonneUtilisee: colonneExiste ? 'POIDS_NOMBRE_FEVES_ENTIERES' : 'REMARQUE'
+      return res.status(500).json({ 
+        error: 'Erreur enregistrement: ' + err.message,
+        sqlError: err.sqlMessage
       });
+    }
+    
+    res.json({ 
+      success: true, 
+      message: 'Analyse cacao enregistrée avec succès',
+      idAnalyse: result.insertId,
+      classification: {
+        normeIvoirienne: normeIvoirienne,
+        normeInternationale: normeInternationale,
+        toleranceSG,
+        raisonsTolerance
+      }
     });
   });
 });
@@ -700,14 +630,13 @@ app.post('/api/analyses/cafe', (req, res) => {
 });
 
 // ===============================================
-// ROUTES POUR LA GESTION DES RÉSULTATS D'ANALYSES
+// MODIFICATION DE LA ROUTE EXISTANTE /api/analyses/cacao
+// Pour inclure uniquement les analyses validées si demandé
 // ===============================================
-
-// Route pour récupérer toutes les analyses Cacao avec filtres
 app.get('/api/analyses/cacao', (req, res) => {
   const { 
     codeSecret, dateDebut, dateFin, campagne, ville, 
-    exportateur, conforme, limit 
+    exportateur, conforme, limit, seulementValidees 
   } = req.query;
   
   let sql = `
@@ -716,6 +645,8 @@ app.get('/api/analyses/cacao', (req, res) => {
       rc.CODE_SECRET_CODIFICATION,
       l.NUM_LOTS,
       e.RAISONSOCIALE_EXPORTATEUR,
+      d.REF_DEMANDE,
+      d.AUT_DEMANDE,
       p.LIBELLE_PRODUIT,
       d.CAMP_DEMANDE,
       d.VILLE_DEMANDE,
@@ -733,7 +664,12 @@ app.get('/api/analyses/cacao', (req, res) => {
   
   const params = [];
   
-  // Filtres
+  // Filtrer uniquement les analyses validées si demandé
+  if (seulementValidees === 'true') {
+    sql += " AND ka.VALIDER_ANALYSE_KKO = 1";
+  }
+  
+  // Filtres existants
   if (codeSecret) {
     sql += " AND rc.CODE_SECRET_CODIFICATION LIKE ?";
     params.push(`%${codeSecret}%`);
@@ -777,7 +713,7 @@ app.get('/api/analyses/cacao', (req, res) => {
     sql += " LIMIT ?";
     params.push(parseInt(limit));
   } else {
-    sql += " LIMIT 100"; // Limite par défaut
+    sql += " LIMIT 100";
   }
   
   pool.query(sql, params, (err, results) => {
@@ -789,8 +725,11 @@ app.get('/api/analyses/cacao', (req, res) => {
   });
 });
 
-// Route pour valider/rejeter des analyses
-app.post('/api/analyses/valider', (req, res) => {
+// ===============================================
+// MODIFICATION DE LA ROUTE DE VALIDATION EXISTANTE
+// Pour mettre à jour validation_bv en même temps
+// ===============================================
+app.post('/api/analyses/valider', async (req, res) => {
   const { analysesIds, valider } = req.body;
   
   if (!analysesIds || !Array.isArray(analysesIds) || analysesIds.length === 0) {
@@ -798,25 +737,136 @@ app.post('/api/analyses/valider', (req, res) => {
   }
   
   const validerInt = valider ? 1 : 0;
+  const validateurId = 7;
   
-  pool.query(
-    "UPDATE kko_analyses SET VALIDER_ANALYSE_KKO = ? WHERE ID_ANALYSE_KKO IN (?)",
-    [validerInt, analysesIds],
-    (err, result) => {
-      if (err) {
-        console.error("Erreur validation analyses:", err);
-        return res.status(500).json({ error: err.message });
+  try {
+    // 1. Mettre à jour kko_analyses
+    await new Promise((resolve, reject) => {
+      pool.query(
+        "UPDATE kko_analyses SET VALIDER_ANALYSE_KKO = ? WHERE ID_ANALYSE_KKO IN (?)",
+        [validerInt, analysesIds],
+        (err, result) => {
+          if (err) reject(err);
+          else resolve(result);
+        }
+      );
+    });
+    
+    // 2. Si validation, enregistrer dans validation_bv
+    if (valider) {
+      for (const analyseId of analysesIds) {
+        // Vérifier si déjà dans validation_bv
+        const existeDeja = await new Promise((resolve, reject) => {
+          pool.query(
+            "SELECT ID_VALIDATION_BV FROM validation_bv WHERE ID_ANALYSE_KKO = ?",
+            [analyseId],
+            (err, results) => {
+              if (err) reject(err);
+              else resolve(results.length > 0);
+            }
+          );
+        });
+        
+        if (!existeDeja) {
+          // Récupérer les données
+          const analyseData = await new Promise((resolve, reject) => {
+            pool.query(`
+              SELECT 
+                kko.*,
+                rc.CODE_SECRET_CODIFICATION,
+                l.NUM_LOTS,
+                e.RAISONSOCIALE_EXPORTATEUR,
+                d.REF_DEMANDE,
+                d.AUT_DEMANDE,
+                d.CAMP_DEMANDE,
+                d.VILLE_DEMANDE,
+                u.NOM_UTILISATEURS as NOM_ANALYSEUR
+              FROM kko_analyses kko
+              LEFT JOIN registre_codification rc ON kko.ID_CODIFICATION = rc.ID_CODIFICATION
+              LEFT JOIN resgistre_sondage rs ON rc.ID_SONDAGE = rs.ID_SONDAGE
+              LEFT JOIN lots l ON rs.ID_Lot = l.ID_LOTS
+              LEFT JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
+              LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
+              LEFT JOIN utilisateurs u ON kko.ANALYSEUR_ANALYSE_KKO = u.ID_UTILISATEURS
+              WHERE kko.ID_ANALYSE_KKO = ?
+            `, [analyseId], (err, results) => {
+              if (err) reject(err);
+              else resolve(results[0]);
+            });
+          });
+          
+          if (analyseData) {
+            // Insérer dans validation_bv
+            await new Promise((resolve, reject) => {
+              const sql = `
+                INSERT INTO validation_bv (
+                  ID_ANALYSE_KKO, VALIDATEUR_ID, STATUT_VALIDATION,
+                  CODE_SECRET_CODIFICATION, REF_DEMANDE, AUT_DEMANDE,
+                  RAISONSOCIALE_EXPORTATEUR, NUM_LOTS, NOM_ANALYSEUR,
+                  CAMP_DEMANDE, VILLE_DEMANDE, DATE_ANALYSE_KKO,
+                  POIDS_BRISURES, POIDS_DECHET, POIDS_CRABOT, POIDS_ETRANGERES,
+                  GRAINAGE, TAUXHUMIDITE, MOISIE_CALCULE, MITEE_CALCULE,
+                  ARDOISEE_CALCULE, PLATE_CALCULE, GERMEE_CALCULE, VIOLETTE_CALCULE,
+                  NORME_IVOIRIENNE, NORME_INTERNATIONALE, CONFORME, REMARQUE,
+                  POIDS_DECLARATION, POIDS_ECHAN_ANALYSE_KKO, POIDS_TOTAL_ECHANTILLON
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              `;
+              
+              pool.query(sql, [
+                analyseId, validateurId, 'VALIDEE',
+                analyseData.CODE_SECRET_CODIFICATION || '',
+                analyseData.REF_DEMANDE || '',
+                analyseData.AUT_DEMANDE || '',
+                analyseData.RAISONSOCIALE_EXPORTATEUR || '',
+                analyseData.NUM_LOTS || '',
+                analyseData.NOM_ANALYSEUR || '',
+                analyseData.CAMP_DEMANDE || '',
+                analyseData.VILLE_DEMANDE || '',
+                analyseData.DATE_ANALYSE_KKO || new Date(),
+                analyseData.POIDS_BRISURES || 0,
+                analyseData.POIDS_DECHET || 0,
+                analyseData.POIDS_CRABOT || 0,
+                analyseData.POIDS_ETRANGERES || 0,
+                analyseData.GRAINAGE || 0,
+                analyseData.TAUXHUMIDITE || 0,
+                analyseData.MOISIE_CALCULE || 0,
+                analyseData.MITEE_CALCULE || 0,
+                analyseData.ARDOISEE_CALCULE || 0,
+                analyseData.PLATE_CALCULE || 0,
+                analyseData.GERMEE_CALCULE || 0,
+                analyseData.VIOLETTE_CALCULE || 0,
+                analyseData.NORME_IVOIRIENNE || '',
+                analyseData.NORME_INTERNATIONALE || '',
+                analyseData.CONFORME || 0,
+                analyseData.REMARQUE || '',
+                analyseData.POIDS_DECLARATION || 0,
+                analyseData.POIDS_ECHAN_ANALYSE_KKO || 0,
+                analyseData.POIDS_TOTAL_ECHANTILLON || 0
+              ], (err) => {
+                if (err) reject(err);
+                else resolve();
+              });
+            });
+          }
+        }
       }
-      
-      res.json({ 
-        success: true, 
-        message: `${result.affectedRows} analyse(s) ${valider ? 'validée(s)' : 'rejetée(s)'} avec succès` 
-      });
     }
-  );
+    
+    res.json({ 
+      success: true, 
+      message: `${analysesIds.length} analyse(s) ${valider ? 'validée(s)' : 'rejetée(s)'} avec succès` 
+    });
+    
+  } catch (error) {
+    console.error("Erreur validation analyses:", error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
-// Route pour modifier une analyse
+// ===============================================
+// MODIFICATION DE LA ROUTE EXISTANTE /api/analyses/:id (PUT)
+// Pour mettre à jour validation_bv si l'analyse est validée
+// ===============================================
 app.put('/api/analyses/:id', (req, res) => {
   const { id } = req.params;
   const updates = req.body;
@@ -832,11 +882,12 @@ app.put('/api/analyses/:id', (req, res) => {
       return res.status(404).json({ error: "Analyse non trouvée" });
     }
     
-    // Construire la requête de mise à jour dynamiquement
+    const analyse = results[0];
+    
+    // Construire la requête de mise à jour
     const setClauses = [];
     const values = [];
     
-    // Champs modifiables
     const allowedFields = [
       'POIDS_BRISURES', 'POIDS_DECHET', 'POIDS_CRABOT', 'POIDS_ETRANGERES',
       'TAUXHUMIDITE', 'CONFORME', 'REMARQUE', 'MOISIE_CALCULE',
@@ -856,15 +907,42 @@ app.put('/api/analyses/:id', (req, res) => {
       return res.status(400).json({ error: "Aucune modification à apporter" });
     }
     
-    // Ajouter l'ID à la fin des valeurs
     values.push(id);
-    
     const sql = `UPDATE kko_analyses SET ${setClauses.join(', ')} WHERE ID_ANALYSE_KKO = ?`;
     
     pool.query(sql, values, (err, result) => {
       if (err) {
         console.error("Erreur modification analyse:", err);
         return res.status(500).json({ error: err.message });
+      }
+      
+      // Si l'analyse est validée, mettre à jour validation_bv
+      if (analyse.VALIDER_ANALYSE_KKO === 1) {
+        const updateClausesBV = [];
+        const valuesBV = [];
+        
+        allowedFields.forEach(field => {
+          if (updates[field] !== undefined) {
+            updateClausesBV.push(`${field} = ?`);
+            valuesBV.push(updates[field]);
+          }
+        });
+        
+        if (updateClausesBV.length > 0) {
+          updateClausesBV.push('STATUT_VALIDATION = ?');
+          valuesBV.push('MODIFIEE');
+          updateClausesBV.push('VALIDATION_DATE = NOW()');
+          
+          valuesBV.push(id);
+          
+          const sqlBV = `UPDATE validation_bv SET ${updateClausesBV.join(', ')} WHERE ID_ANALYSE_KKO = ?`;
+          
+          pool.query(sqlBV, valuesBV, (err) => {
+            if (err) {
+              console.error("Erreur mise à jour validation_bv:", err);
+            }
+          });
+        }
       }
       
       res.json({ 
@@ -933,6 +1011,970 @@ app.delete('/api/analyses/:id', (req, res) => {
     });
   });
 });
+
+// ===============================================
+// ROUTES POUR LA VALIDATION BV (Nouveau)
+// ===============================================
+
+// Route pour valider des analyses et les enregistrer dans validation_bv
+app.post('/api/analyses/valider-bv', async (req, res) => {
+  const { analysesIds, valider } = req.body;
+  
+  if (!analysesIds || !Array.isArray(analysesIds) || analysesIds.length === 0) {
+    return res.status(400).json({ error: "Liste d'analyses invalide" });
+  }
+  
+  const statut = valider ? 'VALIDEE' : 'REJETEE';
+  const validateurId = 7; // ID du validateur par défaut (Ange Man)
+  
+  try {
+    const results = [];
+    const errors = [];
+    
+    for (const analyseId of analysesIds) {
+      try {
+        // Vérifier si l'analyse existe déjà dans validation_bv
+        const existeDeja = await new Promise((resolve, reject) => {
+          pool.query(
+            "SELECT ID_VALIDATION_BV FROM validation_bv WHERE ID_ANALYSE_KKO = ?",
+            [analyseId],
+            (err, results) => {
+              if (err) reject(err);
+              else resolve(results.length > 0);
+            }
+          );
+        });
+        
+        if (existeDeja) {
+          // Mettre à jour le statut si déjà existant
+          await new Promise((resolve, reject) => {
+            pool.query(`
+              UPDATE validation_bv 
+              SET STATUT_VALIDATION = ?, 
+                  VALIDATEUR_ID = ?,
+                  VALIDATION_DATE = NOW()
+              WHERE ID_ANALYSE_KKO = ?
+            `, [statut, validateurId, analyseId], (err) => {
+              if (err) reject(err);
+              else resolve();
+            });
+          });
+          
+          results.push({ 
+            id: analyseId, 
+            action: 'mise à jour',
+            statut: statut 
+          });
+        } else if (valider) {
+          // Récupérer les données complètes de l'analyse
+          const analyseData = await new Promise((resolve, reject) => {
+            pool.query(`
+              SELECT 
+                kko.*,
+                rc.CODE_SECRET_CODIFICATION,
+                l.NUM_LOTS,
+                e.RAISONSOCIALE_EXPORTATEUR,
+                d.REF_DEMANDE,
+                d.AUT_DEMANDE,
+                d.CAMP_DEMANDE,
+                d.VILLE_DEMANDE,
+                u.NOM_UTILISATEURS as NOM_ANALYSEUR
+              FROM kko_analyses kko
+              LEFT JOIN registre_codification rc ON kko.ID_CODIFICATION = rc.ID_CODIFICATION
+              LEFT JOIN resgistre_sondage rs ON rc.ID_SONDAGE = rs.ID_SONDAGE
+              LEFT JOIN lots l ON rs.ID_Lot = l.ID_LOTS
+              LEFT JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
+              LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
+              LEFT JOIN utilisateurs u ON kko.ANALYSEUR_ANALYSE_KKO = u.ID_UTILISATEURS
+              WHERE kko.ID_ANALYSE_KKO = ?
+            `, [analyseId], (err, results) => {
+              if (err) reject(err);
+              else resolve(results[0]);
+            });
+          });
+          
+          if (!analyseData) {
+            errors.push(`Analyse ${analyseId} non trouvée`);
+            continue;
+          }
+          
+          // Insérer dans validation_bv
+          await new Promise((resolve, reject) => {
+            const sql = `
+              INSERT INTO validation_bv (
+                ID_ANALYSE_KKO, VALIDATEUR_ID, STATUT_VALIDATION,
+                CODE_SECRET_CODIFICATION, REF_DEMANDE, AUT_DEMANDE,
+                RAISONSOCIALE_EXPORTATEUR, NUM_LOTS, NOM_ANALYSEUR,
+                CAMP_DEMANDE, VILLE_DEMANDE, DATE_ANALYSE_KKO,
+                POIDS_BRISURES, POIDS_DECHET, POIDS_CRABOT, POIDS_ETRANGERES,
+                GRAINAGE, TAUXHUMIDITE, MOISIE_CALCULE, MITEE_CALCULE,
+                ARDOISEE_CALCULE, PLATE_CALCULE, GERMEE_CALCULE, VIOLETTE_CALCULE,
+                NORME_IVOIRIENNE, NORME_INTERNATIONALE, CONFORME, REMARQUE,
+                POIDS_DECLARATION, POIDS_ECHAN_ANALYSE_KKO, POIDS_TOTAL_ECHANTILLON,
+                MOISIE_TOTAL, MITEE_TOTAL, ARDOISEE_TOTAL, PLATE_TOTAL, GERMEE_TOTAL, VIOLETTE_TOTAL,
+                TAUXBRISURE, TAUXDECHETS, TAUXCRABOT, TAUXMATIERE, TOTAL_DEFECTUEUSES
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `;
+            
+            const values = [
+              analyseId,
+              validateurId,
+              statut,
+              analyseData.CODE_SECRET_CODIFICATION || '',
+              analyseData.REF_DEMANDE || '',
+              analyseData.AUT_DEMANDE || '',
+              analyseData.RAISONSOCIALE_EXPORTATEUR || '',
+              analyseData.NUM_LOTS || '',
+              analyseData.NOM_ANALYSEUR || '',
+              analyseData.CAMP_DEMANDE || '',
+              analyseData.VILLE_DEMANDE || '',
+              analyseData.DATE_ANALYSE_KKO || new Date(),
+              analyseData.POIDS_BRISURES || 0,
+              analyseData.POIDS_DECHET || 0,
+              analyseData.POIDS_CRABOT || 0,
+              analyseData.POIDS_ETRANGERES || 0,
+              analyseData.GRAINAGE || 0,
+              analyseData.TAUXHUMIDITE || 0,
+              analyseData.MOISIE_CALCULE || 0,
+              analyseData.MITEE_CALCULE || 0,
+              analyseData.ARDOISEE_CALCULE || 0,
+              analyseData.PLATE_CALCULE || 0,
+              analyseData.GERMEE_CALCULE || 0,
+              analyseData.VIOLETTE_CALCULE || 0,
+              analyseData.NORME_IVOIRIENNE || '',
+              analyseData.NORME_INTERNATIONALE || '',
+              analyseData.CONFORME || 0,
+              analyseData.REMARQUE || '',
+              analyseData.POIDS_DECLARATION || 0,
+              analyseData.POIDS_ECHAN_ANALYSE_KKO || 0,
+              analyseData.POIDS_TOTAL_ECHANTILLON || 0,
+              analyseData.MOISIE_TOTAL || 0,
+              analyseData.MITEE_TOTAL || 0,
+              analyseData.ARDOISEE_TOTAL || 0,
+              analyseData.PLATE_TOTAL || 0,
+              analyseData.GERMEE_TOTAL || 0,
+              analyseData.VIOLETTE_TOTAL || 0,
+              analyseData.TAUXBRISURE || 0,
+              analyseData.TAUXDECHETS || 0,
+              analyseData.TAUXCRABOT || 0,
+              analyseData.TAUXMATIERE || 0,
+              analyseData.TOTAL_DEFECTUEUSES || 0
+            ];
+            
+            pool.query(sql, values, (err) => {
+              if (err) reject(err);
+              else resolve();
+            });
+          });
+          
+          results.push({ 
+            id: analyseId, 
+            action: 'insertion',
+            statut: statut 
+          });
+        }
+        
+      } catch (error) {
+        errors.push(`Erreur sur analyse ${analyseId}: ${error.message}`);
+        console.error(`Erreur traitement analyse ${analyseId}:`, error);
+      }
+    }
+    
+    // Mettre à jour le statut dans kko_analyses
+    if (valider) {
+      await new Promise((resolve, reject) => {
+        pool.query(
+          "UPDATE kko_analyses SET VALIDER_ANALYSE_KKO = 1 WHERE ID_ANALYSE_KKO IN (?)",
+          [analysesIds],
+          (err) => {
+            if (err) reject(err);
+            else resolve();
+          }
+        );
+      });
+    }
+    
+    const message = valider 
+      ? `${results.length} analyse(s) validée(s) et enregistrée(s) dans validation_bv`
+      : `${results.length} analyse(s) rejetée(s)`;
+    
+    res.json({ 
+      success: true, 
+      message,
+      results,
+      errors: errors.length > 0 ? errors : undefined
+    });
+    
+  } catch (error) {
+    console.error("Erreur validation BV:", error);
+    res.status(500).json({ 
+      error: "Erreur serveur lors de la validation",
+      details: error.message 
+    });
+  }
+});
+
+// Route pour récupérer les analyses validées (depuis validation_bv)
+app.get('/api/analyses/validees-bv', (req, res) => {
+  const { 
+    refDemande, autorisation, exportateur, numeroLot, 
+    codeSecret, campagne, ville, dateDebut, dateFin, 
+    conforme, limit, page 
+  } = req.query;
+  
+  let sql = `
+    SELECT 
+      vb.*,
+      u.NOM_UTILISATEURS as NOM_VALIDATEUR
+    FROM validation_bv vb
+    LEFT JOIN utilisateurs u ON vb.VALIDATEUR_ID = u.ID_UTILISATEURS
+    WHERE vb.STATUT_VALIDATION != 'REJETEE'
+  `;
+  
+  const params = [];
+  
+  // Filtres
+  if (refDemande) {
+    sql += " AND vb.REF_DEMANDE LIKE ?";
+    params.push(`%${refDemande}%`);
+  }
+  
+  if (autorisation) {
+    sql += " AND vb.AUT_DEMANDE LIKE ?";
+    params.push(`%${autorisation}%`);
+  }
+  
+  if (exportateur) {
+    sql += " AND vb.RAISONSOCIALE_EXPORTATEUR LIKE ?";
+    params.push(`%${exportateur}%`);
+  }
+  
+  if (numeroLot) {
+    sql += " AND vb.NUM_LOTS LIKE ?";
+    params.push(`%${numeroLot}%`);
+  }
+  
+  if (codeSecret) {
+    sql += " AND vb.CODE_SECRET_CODIFICATION = ?";
+    params.push(codeSecret);
+  }
+  
+  if (campagne) {
+    sql += " AND vb.CAMP_DEMANDE = ?";
+    params.push(campagne);
+  }
+  
+  if (ville) {
+    sql += " AND vb.VILLE_DEMANDE = ?";
+    params.push(ville);
+  }
+  
+  if (dateDebut) {
+    sql += " AND DATE(vb.VALIDATION_DATE) >= ?";
+    params.push(dateDebut);
+  }
+  
+  if (dateFin) {
+    sql += " AND DATE(vb.VALIDATION_DATE) <= ?";
+    params.push(dateFin);
+  }
+  
+  if (conforme !== undefined) {
+    sql += " AND vb.CONFORME = ?";
+    params.push(parseInt(conforme));
+  }
+  
+  sql += " ORDER BY vb.VALIDATION_DATE DESC";
+  
+  // Pagination
+  const itemsPerPage = parseInt(limit) || 100;
+  const currentPage = parseInt(page) || 1;
+  const offset = (currentPage - 1) * itemsPerPage;
+  
+  // Compter le total
+  const countSql = sql.replace('SELECT vb.*, u.NOM_UTILISATEURS as NOM_VALIDATEUR', 'SELECT COUNT(*) as total');
+  
+  pool.query(countSql, params, (countErr, countResults) => {
+    if (countErr) {
+      console.error("Erreur comptage analyses BV:", countErr);
+      return res.status(500).json({ error: countErr.message });
+    }
+    
+    const totalItems = countResults[0].total;
+    const totalPages = Math.ceil(totalItems / itemsPerPage);
+    
+    // Ajouter la pagination
+    sql += " LIMIT ? OFFSET ?";
+    params.push(itemsPerPage, offset);
+    
+    pool.query(sql, params, (err, results) => {
+      if (err) {
+        console.error("Erreur récupération analyses BV:", err);
+        return res.status(500).json({ error: err.message });
+      }
+      
+      // Calculer les totaux des défauts pour chaque analyse
+      const analysesAvecTotaux = results.map(analyse => ({
+        ...analyse,
+        TOTAL_DEFECTUEUSES_CALCULE: (parseFloat(analyse.GERMEE_CALCULE || 0) + 
+                                     parseFloat(analyse.PLATE_CALCULE || 0) + 
+                                     parseFloat(analyse.MITEE_CALCULE || 0)).toFixed(3)
+      }));
+      
+      res.json({
+        data: analysesAvecTotaux,
+        pagination: {
+          currentPage,
+          itemsPerPage,
+          totalItems,
+          totalPages,
+          hasNextPage: currentPage < totalPages,
+          hasPrevPage: currentPage > 1
+        }
+      });
+    });
+  });
+});
+
+// Route pour modifier une analyse validée
+app.put('/api/analyses/validees-bv/:id', (req, res) => {
+  const { id } = req.params;
+  const updates = req.body;
+  
+  // Liste des champs modifiables
+  const allowedFields = [
+    'POIDS_BRISURES', 'POIDS_DECHET', 'POIDS_CRABOT', 'POIDS_ETRANGERES',
+    'GRAINAGE', 'TAUXHUMIDITE', 'MOISIE_CALCULE', 'MITEE_CALCULE',
+    'ARDOISEE_CALCULE', 'PLATE_CALCULE', 'GERMEE_CALCULE', 'VIOLETTE_CALCULE',
+    'NORME_IVOIRIENNE', 'NORME_INTERNATIONALE', 'CONFORME', 'REMARQUE',
+    'STATUT_VALIDATION'
+  ];
+  
+  const setClauses = [];
+  const values = [];
+  
+  allowedFields.forEach(field => {
+    if (updates[field] !== undefined) {
+      setClauses.push(`${field} = ?`);
+      values.push(updates[field]);
+    }
+  });
+  
+  if (setClauses.length === 0) {
+    return res.status(400).json({ error: "Aucune modification à apporter" });
+  }
+  
+  // Ajouter la date de modification
+  setClauses.push('VALIDATION_DATE = NOW()');
+  
+  // Ajouter l'ID à la fin
+  values.push(id);
+  
+  const sql = `UPDATE validation_bv SET ${setClauses.join(', ')} WHERE ID_VALIDATION_BV = ?`;
+  
+  pool.query(sql, values, (err, result) => {
+    if (err) {
+      console.error("Erreur modification analyse BV:", err);
+      return res.status(500).json({ error: err.message });
+    }
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: "Analyse non trouvée" });
+    }
+    
+    // Si des paramètres physiques sont modifiés, mettre à jour kko_analyses
+    const champsKko = ['POIDS_BRISURES', 'POIDS_DECHET', 'POIDS_CRABOT', 'POIDS_ETRANGERES', 
+                      'TAUXHUMIDITE', 'CONFORME', 'REMARQUE', 'MOISIE_CALCULE', 
+                      'MITEE_CALCULE', 'ARDOISEE_CALCULE', 'PLATE_CALCULE',
+                      'GERMEE_CALCULE', 'VIOLETTE_CALCULE', 'NORME_IVOIRIENNE',
+                      'NORME_INTERNATIONALE'];
+      
+    const champsAMettreAJour = allowedFields.filter(field => 
+      champsKko.includes(field) && updates[field] !== undefined
+    );
+    
+    if (champsAMettreAJour.length > 0) {
+      // Récupérer l'ID de l'analyse originale
+      pool.query(
+        "SELECT ID_ANALYSE_KKO FROM validation_bv WHERE ID_VALIDATION_BV = ?",
+        [id],
+        (err, results) => {
+          if (!err && results.length > 0) {
+            const idAnalyseKKO = results[0].ID_ANALYSE_KKO;
+            
+            const updateClausesKko = [];
+            const valuesKko = [];
+            
+            champsAMettreAJour.forEach(field => {
+              updateClausesKko.push(`${field} = ?`);
+              valuesKko.push(updates[field]);
+            });
+            
+            valuesKko.push(idAnalyseKKO);
+            
+            const sqlKko = `UPDATE kko_analyses SET ${updateClausesKko.join(', ')} WHERE ID_ANALYSE_KKO = ?`;
+            
+            pool.query(sqlKko, valuesKko, (err) => {
+              if (err) {
+                console.error("Erreur mise à jour kko_analyses:", err);
+              }
+            });
+          }
+        }
+      );
+    }
+    
+    res.json({ 
+      success: true, 
+      message: "Analyse modifiée avec succès",
+      statut: updates.STATUT_VALIDATION || 'MODIFIEE'
+    });
+  });
+});
+
+// Route pour supprimer/rejeter une analyse validée
+app.delete('/api/analyses/validees-bv/:id', async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    // Récupérer l'ID de l'analyse originale
+    const analyseData = await new Promise((resolve, reject) => {
+      pool.query(
+        "SELECT ID_ANALYSE_KKO FROM validation_bv WHERE ID_VALIDATION_BV = ?",
+        [id],
+        (err, results) => {
+          if (err) reject(err);
+          else resolve(results[0]);
+        }
+      );
+    });
+    
+    if (!analyseData) {
+      return res.status(404).json({ error: "Analyse non trouvée" });
+    }
+    
+    // Mettre à jour le statut à REJETEE plutôt que supprimer
+    await new Promise((resolve, reject) => {
+      pool.query(
+        "UPDATE validation_bv SET STATUT_VALIDATION = 'REJETEE', VALIDATION_DATE = NOW() WHERE ID_VALIDATION_BV = ?",
+        [id],
+        (err) => {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
+    });
+    
+    // Mettre à jour le statut dans kko_analyses
+    await new Promise((resolve, reject) => {
+      pool.query(
+        "UPDATE kko_analyses SET VALIDER_ANALYSE_KKO = 0 WHERE ID_ANALYSE_KKO = ?",
+        [analyseData.ID_ANALYSE_KKO],
+        (err) => {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
+    });
+    
+    res.json({ 
+      success: true, 
+      message: "Analyse rejetée avec succès"
+    });
+    
+  } catch (error) {
+    console.error("Erreur rejet analyse BV:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Route pour obtenir une analyse validée spécifique
+app.get('/api/analyses/validees-bv/:id', (req, res) => {
+  const { id } = req.params;
+  
+  pool.query(`
+    SELECT 
+      vb.*,
+      u.NOM_UTILISATEURS as NOM_VALIDATEUR,
+      kko.POIDS_FEVES_ENTIERES,
+      kko.POIDS_FEVES_PLATES,
+      kko.POIDS_COQUES,
+      kko.TOTAL_LOUPE,
+      kko.TOTAL_FEVES_ENTIERES,
+      kko.LECTURE_HUMIDITE_1,
+      kko.LECTURE_HUMIDITE_2,
+      kko.LECTURE_HUMIDITE_3,
+      kko.TOTAL_HUMIDITE,
+      kko.NBRE_FEVES_DEFAUTS,
+      kko.DATE_ECHANTI_KKO,
+      kko.DATESAISIE_ANALYSE_KKO
+    FROM validation_bv vb
+    LEFT JOIN utilisateurs u ON vb.VALIDATEUR_ID = u.ID_UTILISATEURS
+    LEFT JOIN kko_analyses kko ON vb.ID_ANALYSE_KKO = kko.ID_ANALYSE_KKO
+    WHERE vb.ID_VALIDATION_BV = ? OR vb.ID_ANALYSE_KKO = ?
+  `, [id, id], (err, results) => {
+    if (err) {
+      console.error("Erreur récupération analyse BV:", err);
+      return res.status(500).json({ error: err.message });
+    }
+    
+    if (results.length === 0) {
+      return res.status(404).json({ error: "Analyse non trouvée" });
+    }
+    
+    const analyse = results[0];
+    
+    // Calculer les totaux
+    analyse.TOTAL_DEFECTUEUSES_CALCULE = (
+      parseFloat(analyse.GERMEE_CALCULE || 0) + 
+      parseFloat(analyse.PLATE_CALCULE || 0) + 
+      parseFloat(analyse.MITEE_CALCULE || 0)
+    ).toFixed(3);
+    
+    res.json(analyse);
+  });
+});
+
+// Route pour les statistiques des validations BV
+app.get('/api/analyses/validees-bv/statistiques', (req, res) => {
+  const { dateDebut, dateFin } = req.query;
+  
+  let sql = `
+    SELECT 
+      DATE(VALIDATION_DATE) as date,
+      COUNT(*) as total,
+      SUM(CASE WHEN STATUT_VALIDATION = 'VALIDEE' THEN 1 ELSE 0 END) as validees,
+      SUM(CASE WHEN STATUT_VALIDATION = 'MODIFIEE' THEN 1 ELSE 0 END) as modifiees,
+      SUM(CASE WHEN STATUT_VALIDATION = 'REJETEE' THEN 1 ELSE 0 END) as rejetees,
+      SUM(CASE WHEN CONFORME = 1 THEN 1 ELSE 0 END) as conformes,
+      SUM(CASE WHEN CONFORME = 0 THEN 1 ELSE 0 END) as nonConformes,
+      VILLE_DEMANDE as ville,
+      CAMP_DEMANDE as campagne
+    FROM validation_bv
+    WHERE 1=1
+  `;
+  
+  const params = [];
+  
+  if (dateDebut) {
+    sql += " AND DATE(VALIDATION_DATE) >= ?";
+    params.push(dateDebut);
+  }
+  
+  if (dateFin) {
+    sql += " AND DATE(VALIDATION_DATE) <= ?";
+    params.push(dateFin);
+  }
+  
+  sql += " GROUP BY DATE(VALIDATION_DATE), VILLE_DEMANDE, CAMP_DEMANDE ORDER BY date DESC";
+  
+  pool.query(sql, params, (err, results) => {
+    if (err) {
+      console.error("Erreur statistiques BV:", err);
+      return res.status(500).json({ error: err.message });
+    }
+    
+    // Totaux globaux
+    const totalAnalyses = results.reduce((sum, row) => sum + row.total, 0);
+    const totalValidees = results.reduce((sum, row) => sum + row.validees, 0);
+    const totalModifiees = results.reduce((sum, row) => sum + row.modifiees, 0);
+    const totalRejetees = results.reduce((sum, row) => sum + row.rejetees, 0);
+    const totalConformes = results.reduce((sum, row) => sum + row.conformes, 0);
+    const totalNonConformes = results.reduce((sum, row) => sum + row.nonConformes, 0);
+    
+    res.json({
+      statistiquesParDate: results,
+      totaux: {
+        totalAnalyses,
+        totalValidees,
+        totalModifiees,
+        totalRejetees,
+        totalConformes,
+        totalNonConformes,
+        tauxValidation: totalAnalyses > 0 ? ((totalValidees / totalAnalyses) * 100).toFixed(2) : 0,
+        tauxConformite: totalValidees > 0 ? ((totalConformes / totalValidees) * 100).toFixed(2) : 0
+      }
+    });
+  });
+});
+
+// Route pour créer la table validation_bv si elle n'existe pas
+app.get('/api/init-validation-bv', (req, res) => {
+  const creationTableSQL = `
+    CREATE TABLE IF NOT EXISTS validation_bv (
+      ID_VALIDATION_BV INT PRIMARY KEY AUTO_INCREMENT,
+      ID_ANALYSE_KKO INT NOT NULL,
+      CODE_SECRET_CODIFICATION VARCHAR(50),
+      REF_DEMANDE VARCHAR(50),
+      AUT_DEMANDE VARCHAR(50),
+      RAISONSOCIALE_EXPORTATEUR VARCHAR(255),
+      NUM_LOTS VARCHAR(50),
+      NOM_ANALYSEUR VARCHAR(100),
+      CAMP_DEMANDE VARCHAR(50),
+      VILLE_DEMANDE VARCHAR(100),
+      DATE_ANALYSE_KKO DATETIME,
+      POIDS_BRISURES FLOAT(9,3),
+      POIDS_DECHET FLOAT(9,3),
+      POIDS_CRABOT FLOAT(9,3),
+      POIDS_ETRANGERES FLOAT(9,3),
+      GRAINAGE DOUBLE(15,3),
+      TAUXHUMIDITE FLOAT(9,1),
+      MOISIE_CALCULE FLOAT(9,2),
+      MITEE_CALCULE FLOAT(9,2),
+      ARDOISEE_CALCULE FLOAT(9,2),
+      PLATE_CALCULE FLOAT(9,2),
+      GERMEE_CALCULE FLOAT(9,2),
+      VIOLETTE_CALCULE FLOAT(9,2),
+      NORME_IVOIRIENNE VARCHAR(50),
+      NORME_INTERNATIONALE VARCHAR(50),
+      CONFORME TINYINT(1) DEFAULT 0,
+      REMARQUE TEXT,
+      VALIDATION_DATE DATETIME DEFAULT CURRENT_TIMESTAMP,
+      VALIDATEUR_ID INT,
+      STATUT_VALIDATION ENUM('VALIDEE', 'MODIFIEE', 'REJETEE') DEFAULT 'VALIDEE',
+      POIDS_DECLARATION FLOAT(9,2),
+      POIDS_ECHAN_ANALYSE_KKO FLOAT(9,3),
+      POIDS_TOTAL_ECHANTILLON FLOAT(9,3),
+      MOISIE_TOTAL FLOAT(9,3),
+      MITEE_TOTAL FLOAT(9,3),
+      ARDOISEE_TOTAL FLOAT(9,3),
+      PLATE_TOTAL FLOAT(9,3),
+      GERMEE_TOTAL FLOAT(9,3),
+      VIOLETTE_TOTAL FLOAT(9,3),
+      TAUXBRISURE FLOAT(9,1),
+      TAUXDECHETS FLOAT(9,1),
+      TAUXCRABOT FLOAT(9,1),
+      TAUXMATIERE FLOAT(9,1),
+      TOTAL_DEFECTUEUSES FLOAT(9,3),
+      FOREIGN KEY (ID_ANALYSE_KKO) REFERENCES kko_analyses(ID_ANALYSE_KKO),
+      INDEX idx_code_secret (CODE_SECRET_CODIFICATION),
+      INDEX idx_ref_demande (REF_DEMANDE),
+      INDEX idx_num_lot (NUM_LOTS),
+      INDEX idx_exportateur (RAISONSOCIALE_EXPORTATEUR),
+      INDEX idx_date_validation (VALIDATION_DATE),
+      INDEX idx_statut (STATUT_VALIDATION)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `;
+  
+  pool.query(creationTableSQL, (err, results) => {
+    if (err) {
+      console.error("Erreur création table validation_bv:", err);
+      return res.status(500).json({ error: err.message });
+    }
+    
+    res.json({ 
+      success: true, 
+      message: "Table validation_bv créée ou déjà existante" 
+    });
+  });
+});
+
+// ===============================================
+// ROUTES POUR LA TABLE analysevalider (existantes - conservées pour compatibilité)
+// ===============================================
+
+// Route pour valider/rejeter des analyses et les enregistrer dans analysevalider
+app.post('/api/analyses/valider-legacy', async (req, res) => {
+  const { analysesIds, valider } = req.body;
+  
+  if (!analysesIds || !Array.isArray(analysesIds) || analysesIds.length === 0) {
+    return res.status(400).json({ error: "Liste d'analyses invalide" });
+  }
+  
+  // Vérifier que tous les IDs sont des nombres valides
+  const idsValides = analysesIds.every(id => !isNaN(parseInt(id)) && id > 0);
+  if (!idsValides) {
+    return res.status(400).json({ error: "IDs d'analyses invalides" });
+  }
+  
+  const validerInt = valider ? 1 : 0;
+  const action = valider ? 'validate' : 'reject';
+  const statut = valider ? 'validé' : 'rejeté';
+  const validateurId = 7; // ID de l'utilisateur par défaut (Ange Man)
+  
+  try {
+    const results = [];
+    const errors = [];
+    
+    // Pour chaque analyse, récupérer les données et les insérer dans analysevalider
+    for (const analyseId of analysesIds) {
+      try {
+        // Vérifier si l'analyse existe déjà dans analysevalider
+        const existeDeja = await new Promise((resolve, reject) => {
+          pool.query(
+            "SELECT ID_ANALYSE_VALIDER FROM analysevalider WHERE ID_ANALYSE_KKO = ?",
+            [analyseId],
+            (err, results) => {
+              if (err) reject(err);
+              else resolve(results.length > 0);
+            }
+          );
+        });
+        
+        if (existeDeja) {
+          errors.push(`Analyse ${analyseId} déjà validée`);
+          continue;
+        }
+        
+        // Récupérer les données de l'analyse avec jointures
+        const analyseData = await new Promise((resolve, reject) => {
+          pool.query(`
+            SELECT 
+              ka.*,
+              rc.CODE_SECRET_CODIFICATION,
+              l.NUM_LOTS,
+              e.RAISONSOCIALE_EXPORTATEUR,
+              p.LIBELLE_PRODUIT,
+              d.CAMP_DEMANDE,
+              d.VILLE_DEMANDE,
+              u.NOM_UTILISATEURS as NOM_ANALYSEUR
+            FROM kko_analyses ka
+            LEFT JOIN registre_codification rc ON ka.ID_CODIFICATION = rc.ID_CODIFICATION
+            LEFT JOIN resgistre_sondage rs ON rc.ID_SONDAGE = rs.ID_SONDAGE
+            LEFT JOIN lots l ON rs.ID_Lot = l.ID_LOTS
+            LEFT JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
+            LEFT JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
+            LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
+            LEFT JOIN utilisateurs u ON ka.ANALYSEUR_ANALYSE_KKO = u.ID_UTILISATEURS
+            WHERE ka.ID_ANALYSE_KKO = ?
+          `, [analyseId], (err, results) => {
+            if (err) reject(err);
+            else resolve(results[0]);
+          });
+        });
+        
+        if (!analyseData) {
+          errors.push(`Analyse ${analyseId} non trouvée dans kko_analyses`);
+          continue;
+        }
+        
+        // Vérifier si l'analyse est déjà validée dans kko_analyses
+        if (analyseData.VALIDER_ANALYSE_KKO === 1) {
+          errors.push(`Analyse ${analyseId} déjà marquée comme validée dans kko_analyses`);
+          continue;
+        }
+        
+        // Préparer les données pour l'insertion
+        const donneesInsertion = [
+          analyseId,
+          analyseData.CODE_SECRET_CODIFICATION || '',
+          validateurId,
+          action,
+          analyseData.NORME_IVOIRIENNE || '',
+          analyseData.NORME_INTERNATIONALE || '',
+          analyseData.CONFORME || 0,
+          analyseData.REMARQUE || '',
+          statut,
+          analyseData.POIDS_BRISURES || 0,
+          analyseData.POIDS_DECHET || 0,
+          analyseData.POIDS_CRABOT || 0,
+          analyseData.POIDS_ETRANGERES || 0,
+          analyseData.GRAINAGE || 0,
+          analyseData.TAUXHUMIDITE || 0,
+          analyseData.MOISIE_CALCULE || 0,
+          analyseData.MITEE_CALCULE || 0,
+          analyseData.ARDOISEE_CALCULE || 0,
+          analyseData.PLATE_CALCULE || 0,
+          analyseData.GERMEE_CALCULE || 0,
+          analyseData.VIOLETTE_CALCULE || 0,
+          analyseData.NUM_LOTS || '',
+          analyseData.RAISONSOCIALE_EXPORTATEUR || '',
+          analyseData.LIBELLE_PRODUIT || '',
+          analyseData.CAMP_DEMANDE || '',
+          analyseData.VILLE_DEMANDE || ''
+        ];
+        
+        // Insérer dans analysevalider
+        const insertResult = await new Promise((resolve, reject) => {
+          pool.query(`
+            INSERT INTO analysevalider (
+              ID_ANALYSE_KKO, CODE_SECRET_CODIFICATION, DATE_VALIDATION, VALIDATEUR_ID, ACTION,
+              NORME_IVOIRIENNE, NORME_INTERNATIONALE, CONFORME, REMARQUE, STATUT,
+              POIDS_BRISURES, POIDS_DECHET, POIDS_CRABOT, POIDS_ETRANGERES,
+              GRAINAGE, TAUXHUMIDITE, MOISIE_CALCULE, MITEE_CALCULE, ARDOISEE_CALCULE,
+              PLATE_CALCULE, GERMEE_CALCULE, VIOLETTE_CALCULE,
+              NUM_LOTS, RAISONSOCIALE_EXPORTATEUR, LIBELLE_PRODUIT,
+              CAMP_DEMANDE, VILLE_DEMANDE
+            ) VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `, donneesInsertion, (err, result) => {
+            if (err) reject(err);
+            else resolve(result);
+          });
+        });
+        
+        // Mettre à jour le statut dans kko_analyses
+        await new Promise((resolve, reject) => {
+          pool.query(
+            "UPDATE kko_analyses SET VALIDER_ANALYSE_KKO = ? WHERE ID_ANALYSE_KKO = ?",
+            [validerInt, analyseId],
+            (err, result) => {
+              if (err) reject(err);
+              else resolve(result);
+            }
+          );
+        });
+        
+        results.push({
+          id: analyseId,
+          codeSecret: analyseData.CODE_SECRET_CODIFICATION,
+          success: true
+        });
+        
+      } catch (error) {
+        errors.push(`Erreur sur analyse ${analyseId}: ${error.message}`);
+        console.error(`Erreur traitement analyse ${analyseId}:`, error);
+      }
+    }
+    
+    // Préparer la réponse
+    const successCount = results.length;
+    const errorCount = errors.length;
+    
+    if (successCount === 0 && errorCount > 0) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Aucune analyse traitée avec succès",
+        errors: errors
+      });
+    }
+    
+    const message = `${successCount} analyse(s) ${valider ? 'validée(s)' : 'rejetée(s)'} avec succès`;
+    
+    if (errorCount > 0) {
+      res.json({ 
+        success: true, 
+        message: message,
+        warning: `${errorCount} erreur(s) sur ${analysesIds.length} analyse(s)`,
+        results: results,
+        errors: errors
+      });
+    } else {
+      res.json({ 
+        success: true, 
+        message: message,
+        results: results
+      });
+    }
+    
+  } catch (error) {
+    console.error("Erreur validation analyses:", error);
+    res.status(500).json({ 
+      error: "Erreur serveur lors de la validation",
+      details: error.message 
+    });
+  }
+});
+
+// Route pour récupérer les analyses validées (ancien système)
+app.get('/api/analyses/validees-legacy', (req, res) => {
+  const { 
+    dateDebut, dateFin, campagne, ville, exportateur, 
+    statut, limit, page, idAnalyse, codeSecret 
+  } = req.query;
+  
+  let sql = `
+    SELECT 
+      av.*,
+      u.NOM_UTILISATEURS as NOM_VALIDATEUR,
+      ka.DATE_ANALYSE_KKO,
+      ua.NOM_UTILISATEURS as NOM_ANALYSEUR
+    FROM analysevalider av
+    LEFT JOIN utilisateurs u ON av.VALIDATEUR_ID = u.ID_UTILISATEURS
+    LEFT JOIN kko_analyses ka ON av.ID_ANALYSE_KKO = ka.ID_ANALYSE_KKO
+    LEFT JOIN utilisateurs ua ON ka.ANALYSEUR_ANALYSE_KKO = ua.ID_UTILISATEURS
+    WHERE 1=1
+  `;
+  
+  const params = [];
+  
+  // Filtres
+  if (dateDebut) {
+    sql += " AND DATE(av.DATE_VALIDATION) >= ?";
+    params.push(dateDebut);
+  }
+  
+  if (dateFin) {
+    sql += " AND DATE(av.DATE_VALIDATION) <= ?";
+    params.push(dateFin);
+  }
+  
+  if (campagne && campagne !== 'all') {
+    sql += " AND av.CAMP_DEMANDE = ?";
+    params.push(campagne);
+  }
+  
+  if (ville && ville !== 'all') {
+    sql += " AND av.VILLE_DEMANDE = ?";
+    params.push(ville);
+  }
+  
+  if (exportateur && exportateur !== 'all') {
+    sql += " AND av.RAISONSOCIALE_EXPORTATEUR LIKE ?";
+    params.push(`%${exportateur}%`);
+  }
+  
+  if (statut && statut !== 'all') {
+    sql += " AND av.STATUT = ?";
+    params.push(statut);
+  }
+  
+  if (idAnalyse) {
+    sql += " AND av.ID_ANALYSE_KKO = ?";
+    params.push(parseInt(idAnalyse));
+  }
+  
+  if (codeSecret) {
+    sql += " AND av.CODE_SECRET_CODIFICATION = ?";
+    params.push(codeSecret);
+  }
+  
+  sql += " ORDER BY av.DATE_VALIDATION DESC";
+  
+  // Pagination
+  const itemsPerPage = parseInt(limit) || 100;
+  const currentPage = parseInt(page) || 1;
+  const offset = (currentPage - 1) * itemsPerPage;
+  
+  // Requête pour le total
+  const countSql = sql.replace(/SELECT .* FROM/, 'SELECT COUNT(*) as total FROM');
+  
+  pool.query(countSql, params, (countErr, countResults) => {
+    if (countErr) {
+      console.error("Erreur comptage analyses validées:", countErr);
+      return res.status(500).json({ error: countErr.message });
+    }
+    
+    const totalItems = countResults[0].total;
+    const totalPages = Math.ceil(totalItems / itemsPerPage);
+    
+    // Requête pour les données avec pagination
+    sql += " LIMIT ? OFFSET ?";
+    params.push(itemsPerPage, offset);
+    
+    pool.query(sql, params, (err, results) => {
+      if (err) {
+        console.error("Erreur récupération analyses validées:", err);
+        return res.status(500).json({ error: err.message });
+      }
+      
+      res.json({
+        data: results || [],
+        pagination: {
+          currentPage,
+          itemsPerPage,
+          totalItems,
+          totalPages,
+          hasNextPage: currentPage < totalPages,
+          hasPrevPage: currentPage > 1
+        }
+      });
+    });
+  });
+});
+
+// ===============================================
+// AUTRES ROUTES EXISTANTES
+// ===============================================
 
 // Route pour récupérer toutes les demandes avec filtres
 app.get('/api/demandes', (req, res) => {
@@ -1064,197 +2106,6 @@ app.get('/api/demandes/:id/lots', (req, res) => {
   });
 });
 
-// ===============================================
-// ROUTES POUR LA TABLE analysevalider
-// ===============================================
-
-// Route pour valider/rejeter des analyses et les enregistrer dans analysevalider
-app.post('/api/analyses/valider', async (req, res) => {
-  const { analysesIds, valider } = req.body;
-  
-  if (!analysesIds || !Array.isArray(analysesIds) || analysesIds.length === 0) {
-    return res.status(400).json({ error: "Liste d'analyses invalide" });
-  }
-  
-  const validerInt = valider ? 1 : 0;
-  const action = valider ? 'validate' : 'reject';
-  const statut = valider ? 'validé' : 'rejeté';
-  const validateurId = 7; // ID de l'utilisateur par défaut (Ange Man)
-  
-  try {
-    // Pour chaque analyse, récupérer les données et les insérer dans analysevalider
-    for (const analyseId of analysesIds) {
-      // Récupérer les données de l'analyse
-      const analyseData = await new Promise((resolve, reject) => {
-        pool.query(`
-          SELECT 
-            ka.*,
-            rc.CODE_SECRET_CODIFICATION,
-            l.NUM_LOTS,
-            e.RAISONSOCIALE_EXPORTATEUR,
-            p.LIBELLE_PRODUIT,
-            d.CAMP_DEMANDE,
-            d.VILLE_DEMANDE
-          FROM kko_analyses ka
-          LEFT JOIN registre_codification rc ON ka.ID_CODIFICATION = rc.ID_CODIFICATION
-          LEFT JOIN resgistre_sondage rs ON rc.ID_SONDAGE = rs.ID_SONDAGE
-          LEFT JOIN lots l ON rs.ID_Lot = l.ID_LOTS
-          LEFT JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
-          LEFT JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
-          LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
-          WHERE ka.ID_ANALYSE_KKO = ?
-        `, [analyseId], (err, results) => {
-          if (err) reject(err);
-          else resolve(results[0]);
-        });
-      });
-      
-      if (!analyseData) {
-        console.error(`Analyse ${analyseId} non trouvée`);
-        continue;
-      }
-      
-      // Insérer dans analysevalider
-      await new Promise((resolve, reject) => {
-        pool.query(`
-          INSERT INTO analysevalider (
-            ID_ANALYSE_KKO, CODE_SECRET_CODIFICATION, DATE_VALIDATION, VALIDATEUR_ID, ACTION,
-            NORME_IVOIRIENNE, NORME_INTERNATIONALE, CONFORME, REMARQUE, STATUT,
-            POIDS_BRISURES, POIDS_DECHET, POIDS_CRABOT, POIDS_ETRANGERES,
-            GRAINAGE, TAUXHUMIDITE, MOISIE_CALCULE, MITEE_CALCULE, ARDOISEE_CALCULE,
-            PLATE_CALCULE, GERMEE_CALCULE, VIOLETTE_CALCULE,
-            NUM_LOTS, RAISONSOCIALE_EXPORTATEUR, LIBELLE_PRODUIT,
-            CAMP_DEMANDE, VILLE_DEMANDE
-          ) VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [
-          analyseId,
-          analyseData.CODE_SECRET_CODIFICATION || '',
-          validateurId,
-          action,
-          analyseData.NORME_IVOIRIENNE || '',
-          analyseData.NORME_INTERNATIONALE || '',
-          analyseData.CONFORME || 0,
-          analyseData.REMARQUE || '',
-          statut,
-          analyseData.POIDS_BRISURES || 0,
-          analyseData.POIDS_DECHET || 0,
-          analyseData.POIDS_CRABOT || 0,
-          analyseData.POIDS_ETRANGERES || 0,
-          analyseData.GRAINAGE || 0,
-          analyseData.TAUXHUMIDITE || 0,
-          analyseData.MOISIE_CALCULE || 0,
-          analyseData.MITEE_CALCULE || 0,
-          analyseData.ARDOISEE_CALCULE || 0,
-          analyseData.PLATE_CALCULE || 0,
-          analyseData.GERMEE_CALCULE || 0,
-          analyseData.VIOLETTE_CALCULE || 0,
-          analyseData.NUM_LOTS || '',
-          analyseData.RAISONSOCIALE_EXPORTATEUR || '',
-          analyseData.LIBELLE_PRODUIT || '',
-          analyseData.CAMP_DEMANDE || '',
-          analyseData.VILLE_DEMANDE || ''
-        ], (err, result) => {
-          if (err) reject(err);
-          else resolve(result);
-        });
-      });
-      
-      // Mettre à jour le statut dans kko_analyses
-      await new Promise((resolve, reject) => {
-        pool.query(
-          "UPDATE kko_analyses SET VALIDER_ANALYSE_KKO = ? WHERE ID_ANALYSE_KKO = ?",
-          [validerInt, analyseId],
-          (err, result) => {
-            if (err) reject(err);
-            else resolve(result);
-          }
-        );
-      });
-    }
-    
-    res.json({ 
-      success: true, 
-      message: `${analysesIds.length} analyse(s) ${valider ? 'validée(s)' : 'rejetée(s)'} et enregistrée(s) avec succès` 
-    });
-    
-  } catch (error) {
-    console.error("Erreur validation analyses:", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Route pour récupérer les analyses validées
-app.get('/api/analyses/validees', (req, res) => {
-  const { 
-    dateDebut, dateFin, campagne, ville, exportateur, 
-    statut, limit 
-  } = req.query;
-  
-  let sql = `
-    SELECT 
-      av.*,
-      u.NOM_UTILISATEURS as NOM_VALIDATEUR,
-      ka.DATE_ANALYSE_KKO,
-      ua.NOM_UTILISATEURS as NOM_ANALYSEUR
-    FROM analysevalider av
-    LEFT JOIN utilisateurs u ON av.VALIDATEUR_ID = u.ID_UTILISATEURS
-    LEFT JOIN kko_analyses ka ON av.ID_ANALYSE_KKO = ka.ID_ANALYSE_KKO
-    LEFT JOIN utilisateurs ua ON ka.ANALYSEUR_ANALYSE_KKO = ua.ID_UTILISATEURS
-    WHERE 1=1
-  `;
-  
-  const params = [];
-  
-  // Filtres
-  if (dateDebut) {
-    sql += " AND DATE(av.DATE_VALIDATION) >= ?";
-    params.push(dateDebut);
-  }
-  
-  if (dateFin) {
-    sql += " AND DATE(av.DATE_VALIDATION) <= ?";
-    params.push(dateFin);
-  }
-  
-  if (campagne && campagne !== 'all') {
-    sql += " AND av.CAMP_DEMANDE = ?";
-    params.push(campagne);
-  }
-  
-  if (ville && ville !== 'all') {
-    sql += " AND av.VILLE_DEMANDE = ?";
-    params.push(ville);
-  }
-  
-  if (exportateur && exportateur !== 'all') {
-    sql += " AND av.RAISONSOCIALE_EXPORTATEUR LIKE ?";
-    params.push(`%${exportateur}%`);
-  }
-  
-  if (statut && statut !== 'all') {
-    sql += " AND av.STATUT = ?";
-    params.push(statut);
-  }
-  
-  sql += " ORDER BY av.DATE_VALIDATION DESC";
-  
-  // Limite
-  if (limit) {
-    sql += " LIMIT ?";
-    params.push(parseInt(limit));
-  } else {
-    sql += " LIMIT 100";
-  }
-  
-  pool.query(sql, params, (err, results) => {
-    if (err) {
-      console.error("Erreur récupération analyses validées:", err);
-      return res.status(500).json({ error: err.message });
-    }
-    res.json(results || []);
-  });
-});
-
 // === ROUTES POUR LE SONDAGE ===
 
 // Route pour récupérer les lots avec filtres pour le sondage
@@ -1332,190 +2183,6 @@ app.get('/api/sondage/lots', (req, res) => {
       return res.json([]);
     }
     res.json(results || []);
-  });
-});
-
-// ===============================================
-// === Route POST pour l'enregistrement du sondage d'un ou plusieurs lots ===
-// ===============================================
-app.post('/api/lots/enregistrerSondage', async (req, res) => {
-  const {
-    lotIds, // Tableau d'ID des lots sondés
-    dateSondage,
-    codeSondeur,
-    observationSondage,
-    decisionSondage,
-    nbreEchanSondage,
-    poidsTotalSondage,
-  } = req.body;
-
-  // Fonction pour garantir qu'un champ optionnel est NULL si vide
-  const toNullable = (value) => {
-    if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) {
-        return null;
-    }
-    return value;
-  };
-
-  if (!lotIds || lotIds.length === 0) {
-    return res.status(400).json({ error: "Aucun lot sélectionné" });
-  }
-
-  // Conversion de la décision
-  const etatSondage = decisionSondage === 'Oui' ? 1 : 0;
-  const statutLot = decisionSondage === 'Oui' ? 'OUI' : 'NON';
-  
-  // Nettoyage des champs
-  const cleanedNbreEchan = toNullable(nbreEchanSondage);
-  const cleanedPoidsTotal = toNullable(poidsTotalSondage);
-  const cleanedObservation = toNullable(observationSondage);
-  
-  // Vérifier que le code sondeur existe dans la table utilisateurs si la décision est "Oui"
-  let cleanedCodeSondeur = toNullable(codeSondeur);
-  if (decisionSondage === 'Oui' && cleanedCodeSondeur !== null) {
-      const parsedInt = parseInt(cleanedCodeSondeur);
-      cleanedCodeSondeur = isNaN(parsedInt) ? null : parsedInt;
-      
-      // Vérifier que l'utilisateur existe et est un sondeur
-      if (cleanedCodeSondeur) {
-        try {
-          const userCheck = await new Promise((resolve, reject) => {
-            pool.query(`
-              SELECT u.ID_UTILISATEURS 
-              FROM utilisateurs u
-              LEFT JOIN fonctions f ON u.ID_FONCTIONS = f.ID_FONCTIONS
-              WHERE u.ID_UTILISATEURS = ? 
-              AND (f.LIBELLE_FONCTIONS = 'SONDEUR' OR u.ID_FONCTIONS = 10)
-            `, [cleanedCodeSondeur], (err, results) => {
-              if (err) {
-                reject(err);
-              } else {
-                resolve(results);
-              }
-            });
-          });
-          
-          if (userCheck.length === 0) {
-            return res.status(400).json({ 
-              error: "L'utilisateur sélectionné n'est pas un sondeur valide",
-              codeSondeur: cleanedCodeSondeur
-            });
-          }
-        } catch (err) {
-          console.error("Erreur vérification utilisateur:", err);
-          return res.status(500).json({ error: "Erreur lors de la vérification du sondeur" });
-        }
-      } else {
-        return res.status(400).json({ error: "Un sondeur valide doit être sélectionné pour le sondage" });
-      }
-  } else if (decisionSondage === 'Oui') {
-    return res.status(400).json({ error: "Un sondeur doit être sélectionné pour le sondage" });
-  }
-
-  // Date par défaut si non fournie
-  const cleanedDateSondage = dateSondage || new Date().toISOString().slice(0, 19).replace('T', ' ');
-
-  // Obtenir une connexion du pool pour la transaction
-  pool.getConnection(async (err, connection) => {
-    if (err) {
-      console.error("ERREUR DE CONNEXION:", err);
-      return res.status(500).json({ error: "Erreur de connexion à la base de données." });
-    }
-
-    // Démarrer la transaction
-    connection.beginTransaction(async (err) => {
-      if (err) {
-        connection.release();
-        console.error("ERREUR DÉBUT TRANSACTION:", err);
-        return res.status(500).json({ error: "Erreur de démarrage de la transaction." });
-      }
-
-      try {
-        // Mise à jour des lots et insertion dans resgistre_sondage
-        for (const idLot of lotIds) {
-          // 1. Mise à jour de l'ETAT_SONDAGE_LOTS dans la table lots
-          const updateLotQuery = "UPDATE lots SET ETAT_SONDAGE_LOTS = ? WHERE ID_LOTS = ?";
-          await new Promise((resolve, reject) => {
-            connection.query(updateLotQuery, [statutLot, idLot], (err) => {
-              if (err) {
-                console.error(`Erreur mise à jour lot ${idLot}:`, err);
-                reject(err);
-              } else {
-                resolve();
-              }
-            });
-          });
-          
-          // 2. Insertion dans resgistre_sondage UNIQUEMENT si la décision est 'Oui' (Sondé)
-          if (etatSondage === 1) {
-            const insertSondageQuery = `
-              INSERT INTO resgistre_sondage 
-              (ID_LOT, DATE_SONDAGE_LOT, CODE_SONDEUR_SONDAGE, OBSERVATION_SONDAGE, 
-               ETAT_SONDAGE, NBRE_ECHAN_SONDAGE, POIDS_TOTAL_SONDAGE) 
-              VALUES (?, ?, ?, ?, ?, ?, ?)
-            `;
-            const values = [
-              idLot,
-              cleanedDateSondage,
-              cleanedCodeSondeur,
-              cleanedObservation,
-              etatSondage,
-              cleanedNbreEchan,
-              cleanedPoidsTotal
-            ];
-            
-            await new Promise((resolve, reject) => {
-              connection.query(insertSondageQuery, values, (err, result) => {
-                if (err) {
-                  console.error(`[ERREUR INSERTION resgistre_sondage pour Lot ${idLot}]`, err);
-                  reject(err);
-                } else {
-                  console.log(`Lot ${idLot} enregistré dans resgistre_sondage, ID: ${result.insertId}`);
-                  resolve();
-                }
-              });
-            });
-          } else {
-            console.log(`Lot ${idLot} marqué comme NON sondé`);
-          }
-        }
-
-        // Commit de la transaction
-        connection.commit((err) => {
-          if (err) {
-            return connection.rollback(() => {
-              connection.release();
-              console.error("ERREUR COMMIT:", err);
-              res.status(500).json({ error: "Échec de l'enregistrement. Erreur: " + err.message });
-            });
-          }
-          
-          connection.release();
-          
-          // Message selon la décision
-          const message = decisionSondage === 'Oui' 
-            ? `${lotIds.length} lot(s) sondé(s) et enregistré(s) dans le registre de sondage` 
-            : `${lotIds.length} lot(s) marqué(s) comme non sondé(s)`;
-          
-          res.json({ 
-            success: true, 
-            message: message,
-            lotsTraites: lotIds.length,
-            decision: decisionSondage
-          });
-        });
-      } catch (error) {
-        // Rollback en cas d'erreur
-        connection.rollback(() => {
-          connection.release();
-          console.error("ERREUR LORS DE L'OPÉRATION:", error);
-          res.status(500).json({ 
-            error: "Échec de l'enregistrement du sondage", 
-            details: error.message 
-          });
-        });
-      }
-    });
   });
 });
 
@@ -3316,10 +3983,193 @@ app.get('/api/test-data', (req, res) => {
   });
 });
 
+// === ROUTE POUR L'ENREGISTREMENT DU SONDAGE D'UN OU PLUSIEURS LOTS ===
+app.post('/api/lots/enregistrerSondage', async (req, res) => {
+  const {
+    lotIds, // Tableau d'ID des lots sondés
+    dateSondage,
+    codeSondeur,
+    observationSondage,
+    decisionSondage,
+    nbreEchanSondage,
+    poidsTotalSondage,
+  } = req.body;
+
+  // Fonction pour garantir qu'un champ optionnel est NULL si vide
+  const toNullable = (value) => {
+    if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) {
+        return null;
+    }
+    return value;
+  };
+
+  if (!lotIds || lotIds.length === 0) {
+    return res.status(400).json({ error: "Aucun lot sélectionné" });
+  }
+
+  // Conversion de la décision
+  const etatSondage = decisionSondage === 'Oui' ? 1 : 0;
+  const statutLot = decisionSondage === 'Oui' ? 'OUI' : 'NON';
+  
+  // Nettoyage des champs
+  const cleanedNbreEchan = toNullable(nbreEchanSondage);
+  const cleanedPoidsTotal = toNullable(poidsTotalSondage);
+  const cleanedObservation = toNullable(observationSondage);
+  
+  // Vérifier que le code sondeur existe dans la table utilisateurs si la décision est "Oui"
+  let cleanedCodeSondeur = toNullable(codeSondeur);
+  if (decisionSondage === 'Oui' && cleanedCodeSondeur !== null) {
+      const parsedInt = parseInt(cleanedCodeSondeur);
+      cleanedCodeSondeur = isNaN(parsedInt) ? null : parsedInt;
+      
+      // Vérifier que l'utilisateur existe et est un sondeur
+      if (cleanedCodeSondeur) {
+        try {
+          const userCheck = await new Promise((resolve, reject) => {
+            pool.query(`
+              SELECT u.ID_UTILISATEURS 
+              FROM utilisateurs u
+              LEFT JOIN fonctions f ON u.ID_FONCTIONS = f.ID_FONCTIONS
+              WHERE u.ID_UTILISATEURS = ? 
+              AND (f.LIBELLE_FONCTIONS = 'SONDEUR' OR u.ID_FONCTIONS = 10)
+            `, [cleanedCodeSondeur], (err, results) => {
+              if (err) {
+                reject(err);
+              } else {
+                resolve(results);
+              }
+            });
+          });
+          
+          if (userCheck.length === 0) {
+            return res.status(400).json({ 
+              error: "L'utilisateur sélectionné n'est pas un sondeur valide",
+              codeSondeur: cleanedCodeSondeur
+            });
+          }
+        } catch (err) {
+          console.error("Erreur vérification utilisateur:", err);
+          return res.status(500).json({ error: "Erreur lors de la vérification du sondeur" });
+        }
+      } else {
+        return res.status(400).json({ error: "Un sondeur valide doit être sélectionné pour le sondage" });
+      }
+  } else if (decisionSondage === 'Oui') {
+    return res.status(400).json({ error: "Un sondeur doit être sélectionné pour le sondage" });
+  }
+
+  // Date par défaut si non fournie
+  const cleanedDateSondage = dateSondage || new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+  // Obtenir une connexion du pool pour la transaction
+  pool.getConnection(async (err, connection) => {
+    if (err) {
+      console.error("ERREUR DE CONNEXION:", err);
+      return res.status(500).json({ error: "Erreur de connexion à la base de données." });
+    }
+
+    // Démarrer la transaction
+    connection.beginTransaction(async (err) => {
+      if (err) {
+        connection.release();
+        console.error("ERREUR DÉBUT TRANSACTION:", err);
+        return res.status(500).json({ error: "Erreur de démarrage de la transaction." });
+      }
+
+      try {
+        // Mise à jour des lots et insertion dans resgistre_sondage
+        for (const idLot of lotIds) {
+          // 1. Mise à jour de l'ETAT_SONDAGE_LOTS dans la table lots
+          const updateLotQuery = "UPDATE lots SET ETAT_SONDAGE_LOTS = ? WHERE ID_LOTS = ?";
+          await new Promise((resolve, reject) => {
+            connection.query(updateLotQuery, [statutLot, idLot], (err) => {
+              if (err) {
+                console.error(`Erreur mise à jour lot ${idLot}:`, err);
+                reject(err);
+              } else {
+                resolve();
+              }
+            });
+          });
+          
+          // 2. Insertion dans resgistre_sondage UNIQUEMENT si la décision est 'Oui' (Sondé)
+          if (etatSondage === 1) {
+            const insertSondageQuery = `
+              INSERT INTO resgistre_sondage 
+              (ID_LOT, DATE_SONDAGE_LOT, CODE_SONDEUR_SONDAGE, OBSERVATION_SONDAGE, 
+               ETAT_SONDAGE, NBRE_ECHAN_SONDAGE, POIDS_TOTAL_SONDAGE) 
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+            `;
+            const values = [
+              idLot,
+              cleanedDateSondage,
+              cleanedCodeSondeur,
+              cleanedObservation,
+              etatSondage,
+              cleanedNbreEchan,
+              cleanedPoidsTotal
+            ];
+            
+            await new Promise((resolve, reject) => {
+              connection.query(insertSondageQuery, values, (err, result) => {
+                if (err) {
+                  console.error(`[ERREUR INSERTION resgistre_sondage pour Lot ${idLot}]`, err);
+                  reject(err);
+                } else {
+                  console.log(`Lot ${idLot} enregistré dans resgistre_sondage, ID: ${result.insertId}`);
+                  resolve();
+                }
+              });
+            });
+          } else {
+            console.log(`Lot ${idLot} marqué comme NON sondé`);
+          }
+        }
+
+        // Commit de la transaction
+        connection.commit((err) => {
+          if (err) {
+            return connection.rollback(() => {
+              connection.release();
+              console.error("ERREUR COMMIT:", err);
+              res.status(500).json({ error: "Échec de l'enregistrement. Erreur: " + err.message });
+            });
+          }
+          
+          connection.release();
+          
+          // Message selon la décision
+          const message = decisionSondage === 'Oui' 
+            ? `${lotIds.length} lot(s) sondé(s) et enregistré(s) dans le registre de sondage` 
+            : `${lotIds.length} lot(s) marqué(s) comme non sondé(s)`;
+          
+          res.json({ 
+            success: true, 
+            message: message,
+            lotsTraites: lotIds.length,
+            decision: decisionSondage
+          });
+        });
+      } catch (error) {
+        // Rollback en cas d'erreur
+        connection.rollback(() => {
+          connection.release();
+          console.error("ERREUR LORS DE L'OPÉRATION:", error);
+          res.status(500).json({ 
+            error: "Échec de l'enregistrement du sondage", 
+            details: error.message 
+          });
+        });
+      }
+    });
+  });
+});
+
 const PORT = 5000;
 app.listen(PORT, () => {
   console.log(`Backend démarré sur http://localhost:${PORT}`);
-  console.log('=== Routes disponibles ===');
+  console.log('=== ROUTES DISPONIBLES ===');
+  console.log('');
   console.log('=== Gestion des données ===');
   console.log('- GET  /api/exportateurs, /api/produits, /api/campagnes, /api/magasins');
   console.log('- GET  /api/demandes (avec filtres)');
@@ -3342,16 +4192,27 @@ app.listen(PORT, () => {
   console.log('- GET  /api/codes-secrets/valider/:code (valider code secret)');
   console.log('- POST /api/analyses/cacao (enregistrer analyse cacao - CORRIGÉ)');
   console.log('- POST /api/analyses/cafe (enregistrer analyse café)');
+  console.log('- GET  /api/analyses/cacao (récupérer analyses avec filtres)');
+  console.log('- GET  /api/analyses/:id (récupérer une analyse spécifique)');
+  console.log('- POST /api/analyses/valider (valider/rejeter analyses)');
+  console.log('- PUT  /api/analyses/:id (modifier une analyse)');
+  console.log('- DELETE /api/analyses/:id (supprimer une analyse)');
+  console.log('');
+  console.log('=== NOUVELLES ROUTES VALIDATION BV ===');
+  console.log('- POST /api/analyses/valider-bv (valider analyses dans validation_bv)');
+  console.log('- GET  /api/analyses/validees-bv (récupérer analyses validées)');
+  console.log('- PUT  /api/analyses/validees-bv/:id (modifier analyse validée)');
+  console.log('- DELETE /api/analyses/validees-bv/:id (rejeter analyse)');
+  console.log('- GET  /api/analyses/validees-bv/statistiques (statistiques)');
+  console.log('- GET  /api/init-validation-bv (créer table validation_bv)');
+  console.log('');
+  console.log('=== ROUTES MODIFIÉES ===');
+  console.log('- GET  /api/analyses/cacao (nouveau param: seulementValidees=true)');
+  console.log('- POST /api/analyses/valider (mise à jour validation_bv)');
+  console.log('- PUT  /api/analyses/:id (mise à jour validation_bv si validée)');
   console.log('');
   console.log('=== Utilitaires ===');
   console.log('- GET  /api/init-database (initialiser tables)');
   console.log('- GET  /api/test-data (données de test)');
-  console.log('=== Gestion des résultats d\'analyses ===');
-console.log('- GET  /api/analyses/cacao (récupérer analyses avec filtres)');
-console.log('- GET  /api/analyses/:id (récupérer une analyse spécifique)');
-console.log('- POST /api/analyses/valider (valider/rejeter analyses)');
-console.log('- PUT  /api/analyses/:id (modifier une analyse)');
-console.log('- DELETE /api/analyses/:id (supprimer une analyse)');
-  console.log('');
   console.log('====================================');
 });

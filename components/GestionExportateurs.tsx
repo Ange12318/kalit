@@ -4,7 +4,7 @@ import {
   ListBulletIcon,
   SearchIcon,
   PlusIcon,
-  EditIcon,
+  EditIconAlt,
   TrashIcon,
   PrintIcon,
   LogoutIcon,
@@ -198,7 +198,7 @@ const GestionExportateurs: React.FC<GestionExportateursProps> = ({ onNavigateBac
         <div className="flex justify-between items-center px-6 py-4 border-t bg-gray-50 rounded-b-xl">
           <div className="flex flex-wrap gap-2">
              <button className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2 rounded-md text-sm transition-colors shadow"><PlusIcon className="h-4 w-4" /><span>Ajouter</span></button>
-             <button className="flex items-center space-x-2 bg-yellow-500 hover:bg-yellow-600 text-white font-semibold px-4 py-2 rounded-md text-sm transition-colors shadow"><EditIcon className="h-4 w-4" /><span>Modifier</span></button>
+             <button className="flex items-center space-x-2 bg-yellow-500 hover:bg-yellow-600 text-white font-semibold px-4 py-2 rounded-md text-sm transition-colors shadow"><EditIconAlt className="h-4 w-4" /><span>Modifier</span></button>
              <button className="flex items-center space-x-2 bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-md text-sm transition-colors shadow"><TrashIcon className="h-4 w-4" /><span>Supprimer</span></button>
              <button className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-md text-sm transition-colors shadow"><PrintIcon className="h-4 w-4" /><span>Imprimer</span></button>
           </div>
