@@ -4,7 +4,6 @@ import {
   BackArrowIcon,
   CalendarIcon,
   SearchIcon,
-  PrintIcon,
   ExportIcon,
   EditIconAlt,
   CheckIcon,
@@ -103,14 +102,11 @@ const ValidationCacao: React.FC<ValidationCacaoProps> = ({ onNavigateBack }) => 
   const chargerDonnees = async () => {
     try {
       setLoading(true);
-      const response = await fetch('http://localhost:5000/api/analyses/cacao');
+      // Charger TOUTES les analyses (pas seulement les validées)
+      const response = await fetch('http://localhost:5000/api/analyses/cacao?seulementValidees=false');
       const data = await response.json();
-      // Filtrer uniquement les analyses validées (VALIDER_ANALYSE_KKO = 1)
-      const analysesValidees = data.filter((analyse: AnalyseCacao) => 
-        analyse.VALIDER_ANALYSE_KKO === 1
-      );
-      setAnalyses(analysesValidees);
-      setAnalysesFiltrees(analysesValidees);
+      setAnalyses(data);
+      setAnalysesFiltrees(data);
     } catch (error) {
       console.error('Erreur chargement analyses:', error);
       setAnalyses([]);
@@ -131,8 +127,8 @@ const ValidationCacao: React.FC<ValidationCacaoProps> = ({ onNavigateBack }) => 
       const dataCampagnes = await responseCampagnes.json();
       setCampagnes(dataCampagnes);
 
-      // Charger les villes uniques
-      const responseAnalyses = await fetch('http://localhost:5000/api/analyses/cacao');
+      // Charger les villes uniques depuis toutes les analyses
+      const responseAnalyses = await fetch('http://localhost:5000/api/analyses/cacao?seulementValidees=false');
       const analysesData = await responseAnalyses.json();
       const villesUniques = [...new Set(analysesData.map((a: any) => a.VILLE_DEMANDE).filter(Boolean))];
       setVilles(villesUniques);
@@ -235,30 +231,52 @@ const ValidationCacao: React.FC<ValidationCacaoProps> = ({ onNavigateBack }) => 
     }
   };
 
-  const validerAnalyses = async () => {
+const validerAnalyses = async () => {
     if (selection.length === 0) {
       alert('Sélectionnez au moins une analyse à valider');
       return;
     }
 
+    // Vérifier que les analyses sélectionnées sont déjà validées dans analysevalider
+    const analysesNonValidees = analysesFiltrees.filter(a => 
+      selection.includes(a.ID_ANALYSE_KKO) && a.VALIDER_ANALYSE_KKO !== 1
+    );
+    
+    if (analysesNonValidees.length > 0) {
+      alert(`${analysesNonValidees.length} analyse(s) sélectionnée(s) n'ont pas encore été validées dans le module "Résultats Analyses". Veuillez les valider d'abord dans ce module.`);
+      return;
+    }
+
+    if (!confirm(`Voulez-vous vraiment transférer ${selection.length} analyse(s) vers la validation BV ?`)) {
+      return;
+    }
+
     try {
-      const response = await fetch('http://localhost:5000/api/analyses/valider-bv', {
+      // Utiliser la nouvelle route de transfert
+      const response = await fetch('http://localhost:5000/api/analyses/transfert-validation-bv', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ analysesIds: selection, valider: true })
+        body: JSON.stringify({ analysesIds: selection })
       });
 
       const result = await response.json();
+      
       if (result.success) {
-        alert(result.message);
+        let message = result.message;
+        
+        if (result.errors && result.errors.length > 0) {
+          message += '\n\nErreurs rencontrées :\n' + result.errors.join('\n');
+        }
+        
+        alert(message);
         setSelection([]);
-        chargerDonnees();
+        chargerDonnees(); // Recharger les données
       } else {
-        alert('Erreur: ' + result.error);
+        alert('Erreur: ' + (result.error || 'Erreur inconnue'));
       }
     } catch (error) {
       console.error('Erreur validation:', error);
-      alert('Erreur lors de la validation');
+      alert('Erreur lors du transfert vers validation_bv');
     }
   };
 
@@ -328,18 +346,30 @@ const ValidationCacao: React.FC<ValidationCacaoProps> = ({ onNavigateBack }) => 
     setEditingData({});
   };
 
-  const exporterAnalyses = () => {
-    const csvContent = analysesFiltrees.map(analyse => 
-      Object.values(analyse).join(',')
-    ).join('\n');
-    
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'analyses_cacao_' + new Date().toISOString().split('T')[0] + '.csv';
-    a.click();
-    URL.revokeObjectURL(url);
+  const exporterAnalyses = async () => {
+    try {
+      // Construire l'URL avec les filtres actuels
+      let url = 'http://localhost:5000/api/analyses/cacao/export-txt?';
+      const params = new URLSearchParams();
+      
+      if (filtres.refDemande) params.append('refDemande', filtres.refDemande);
+      if (filtres.autorisation) params.append('autorisation', filtres.autorisation);
+      if (filtres.exportateur && filtres.exportateur !== 'tous') params.append('exportateur', filtres.exportateur);
+      if (filtres.numeroLot) params.append('numeroLot', filtres.numeroLot);
+      if (filtres.campagne && filtres.campagne !== 'toutes') params.append('campagne', filtres.campagne);
+      if (filtres.ville && filtres.ville !== 'toutes') params.append('ville', filtres.ville);
+      if (filtres.dateDebut) params.append('dateDebut', filtres.dateDebut);
+      if (filtres.dateFin) params.append('dateFin', filtres.dateFin);
+      
+      url += params.toString();
+      
+      // Télécharger le fichier
+      window.location.href = url;
+      
+    } catch (error) {
+      console.error('Erreur export:', error);
+      alert('Erreur lors de l\'export');
+    }
   };
 
   const calculerDefectueuses = (analyse: AnalyseCacao) => {
@@ -363,6 +393,33 @@ const ValidationCacao: React.FC<ValidationCacaoProps> = ({ onNavigateBack }) => 
     const now = new Date();
     now.setDate(now.getDate() - 14);
     return now.toISOString().split('T')[0];
+  };
+
+  // Fonction pour déterminer la couleur de la ligne
+  const getRowColor = (analyse: AnalyseCacao) => {
+    if (analyse.VALIDER_ANALYSE_KKO === 1) {
+      return analyse.CONFORME === 1 ? 'bg-green-50 hover:bg-green-100' : 'bg-orange-50 hover:bg-orange-100';
+    } else {
+      return 'bg-red-50 hover:bg-red-100';
+    }
+  };
+
+  // Fonction pour déterminer la couleur du texte du statut
+  const getStatusColor = (analyse: AnalyseCacao) => {
+    if (analyse.VALIDER_ANALYSE_KKO === 1) {
+      return analyse.CONFORME === 1 ? 'text-green-700' : 'text-orange-700';
+    } else {
+      return 'text-red-700';
+    }
+  };
+
+  // Fonction pour obtenir le texte du statut
+  const getStatusText = (analyse: AnalyseCacao) => {
+    if (analyse.VALIDER_ANALYSE_KKO === 1) {
+      return analyse.CONFORME === 1 ? 'Validé - Conforme' : 'Validé - Non Conforme';
+    } else {
+      return 'Non Validé';
+    }
   };
 
   return (
@@ -556,9 +613,25 @@ const ValidationCacao: React.FC<ValidationCacaoProps> = ({ onNavigateBack }) => 
         {/* Table */}
         <div>
           <div className="flex justify-between items-center mb-4">
-            <p className="text-sm text-gray-600">
-              {loading ? 'Chargement...' : `${analysesFiltrees.length} analyse(s) trouvée(s)`}
-            </p>
+            <div>
+              <p className="text-sm text-gray-600">
+                {loading ? 'Chargement...' : `${analysesFiltrees.length} analyse(s) trouvée(s)`}
+              </p>
+              <div className="flex items-center gap-4 mt-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 bg-green-100 border border-green-300"></div>
+                  <span className="text-xs text-gray-600">Validé & Conforme</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 bg-orange-100 border border-orange-300"></div>
+                  <span className="text-xs text-gray-600">Validé & Non Conforme</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 bg-red-100 border border-red-300"></div>
+                  <span className="text-xs text-gray-600">Non Validé</span>
+                </div>
+              </div>
+            </div>
             <div className="flex gap-2">
               <input 
                 type="checkbox" 
@@ -599,7 +672,7 @@ const ValidationCacao: React.FC<ValidationCacaoProps> = ({ onNavigateBack }) => 
                   </tr>
                 ) : (
                   analysesFiltrees.map(analyse => (
-                    <tr key={analyse.ID_ANALYSE_KKO} className="hover:bg-gray-50">
+                    <tr key={analyse.ID_ANALYSE_KKO} className={`${getRowColor(analyse)} transition-colors`}>
                       <td className="p-3">
                         <input 
                           type="checkbox" 
@@ -698,7 +771,9 @@ const ValidationCacao: React.FC<ValidationCacaoProps> = ({ onNavigateBack }) => 
                             onChange={(e) => setEditingData(prev => ({...prev, TAUXHUMIDITE: parseFloat(e.target.value)}))}
                           />
                         ) : (
-                          analyse.TAUXHUMIDITE?.toFixed(1) + '%'
+                          <span className={`font-semibold ${getStatusColor(analyse)}`}>
+                            {analyse.TAUXHUMIDITE?.toFixed(1)}%
+                          </span>
                         )}
                       </td>
                       
@@ -786,7 +861,9 @@ const ValidationCacao: React.FC<ValidationCacaoProps> = ({ onNavigateBack }) => 
                         )}
                       </td>
                       
-                      <td className="p-3">{calculerDefectueuses(analyse)}%</td>
+                      <td className="p-3 font-semibold">
+                        {calculerDefectueuses(analyse)}%
+                      </td>
                       
                       <td className="p-1">
                         {editingId === analyse.ID_ANALYSE_KKO ? (
@@ -797,7 +874,7 @@ const ValidationCacao: React.FC<ValidationCacaoProps> = ({ onNavigateBack }) => 
                             onChange={(e) => setEditingData(prev => ({...prev, NORME_IVOIRIENNE: e.target.value}))}
                           />
                         ) : (
-                          analyse.NORME_IVOIRIENNE
+                          <span className="font-medium">{analyse.NORME_IVOIRIENNE}</span>
                         )}
                       </td>
                       
@@ -810,7 +887,7 @@ const ValidationCacao: React.FC<ValidationCacaoProps> = ({ onNavigateBack }) => 
                             onChange={(e) => setEditingData(prev => ({...prev, NORME_INTERNATIONALE: e.target.value}))}
                           />
                         ) : (
-                          analyse.NORME_INTERNATIONALE
+                          <span className="font-medium">{analyse.NORME_INTERNATIONALE}</span>
                         )}
                       </td>
                       
@@ -825,7 +902,13 @@ const ValidationCacao: React.FC<ValidationCacaoProps> = ({ onNavigateBack }) => 
                             <option value={0}>Non Conforme</option>
                           </select>
                         ) : (
-                          analyse.CONFORME === 1 ? 'Conforme' : 'Non Conforme'
+                          <span className={`font-semibold ${getStatusColor(analyse)}`}>
+                            {analyse.CONFORME === 1 ? 'Conforme' : 'Non Conforme'}
+                            <br />
+                            <span className="text-xs font-normal">
+                              ({getStatusText(analyse)})
+                            </span>
+                          </span>
                         )}
                       </td>
                       
@@ -838,7 +921,9 @@ const ValidationCacao: React.FC<ValidationCacaoProps> = ({ onNavigateBack }) => 
                             onChange={(e) => setEditingData(prev => ({...prev, REMARQUE: e.target.value}))}
                           />
                         ) : (
-                          analyse.REMARQUE?.substring(0, 30) + (analyse.REMARQUE?.length > 30 ? '...' : '')
+                          <span title={analyse.REMARQUE || ''}>
+                            {analyse.REMARQUE?.substring(0, 30) + (analyse.REMARQUE?.length > 30 ? '...' : '')}
+                          </span>
                         )}
                       </td>
                       
@@ -870,13 +955,23 @@ const ValidationCacao: React.FC<ValidationCacaoProps> = ({ onNavigateBack }) => 
                               >
                                 <EditIconAlt className="h-4 w-4" />
                               </button>
-                              <button 
-                                onClick={() => rejeterAnalyse(analyse.ID_ANALYSE_KKO)}
-                                className="bg-red-500 hover:bg-red-600 text-white p-1 rounded"
-                                title="Rejeter"
-                              >
-                                <XIcon className="h-4 w-4" />
-                              </button>
+                              {analyse.VALIDER_ANALYSE_KKO === 1 ? (
+                                <button 
+                                  onClick={() => rejeterAnalyse(analyse.ID_ANALYSE_KKO)}
+                                  className="bg-red-500 hover:bg-red-600 text-white p-1 rounded"
+                                  title="Rejeter"
+                                >
+                                  <XIcon className="h-4 w-4" />
+                                </button>
+                              ) : (
+                                <button 
+                                  onClick={() => gererSelection(analyse.ID_ANALYSE_KKO)}
+                                  className={`p-1 rounded ${selection.includes(analyse.ID_ANALYSE_KKO) ? 'bg-[#0d2d53] text-white' : 'bg-gray-200 text-gray-700'}`}
+                                  title="Sélectionner pour validation"
+                                >
+                                  <CheckIcon className="h-4 w-4" />
+                                </button>
+                              )}
                             </>
                           )}
                         </div>
@@ -901,14 +996,7 @@ const ValidationCacao: React.FC<ValidationCacaoProps> = ({ onNavigateBack }) => 
                 className="px-4 py-2 text-sm font-medium text-white bg-[#0d2d53] rounded-md hover:bg-blue-800 flex items-center gap-2"
               >
                 <ExportIcon className="h-5 w-5"/>
-                Exporter CSV
-              </button>
-              <button 
-                onClick={() => window.print()}
-                className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 flex items-center gap-2"
-              >
-                <PrintIcon className="h-5 w-5"/>
-                Imprimer
+                Exporter TXT (Pour site)
               </button>
             </div>
           </div>

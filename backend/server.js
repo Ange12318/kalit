@@ -51,7 +51,7 @@ app.get('/api/produits', (req, res) => {
 });
 
 app.get('/api/campagnes', (req, res) => {
-  pool.query("SELECT CAMP_DEMANDE as nom FROM campagne ORDER BY CAMP_DEMANDE DESC", (err, results) => {
+  pool.query("SELECT DISTINCT CAMP_DEMANDE as nom FROM demandes ORDER BY CAMP_DEMANDE DESC", (err, results) => {
     if (err) {
       console.error("Erreur campagnes:", err);
       return res.json([]);
@@ -158,7 +158,7 @@ app.get('/api/codes-secrets/valider/:code', (req, res) => {
       mg.NOM_MAGASIN
     FROM registre_codification rc
     JOIN resgistre_sondage rs ON rc.ID_SONDAGE = rs.ID_SONDAGE
-    JOIN lots l ON rs.ID_LOT = l.ID_LOTS
+    JOIN lots l ON rs.ID_Lot = l.ID_LOTS
     JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
     JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
     JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
@@ -713,7 +713,7 @@ app.get('/api/analyses/cacao', (req, res) => {
     sql += " LIMIT ?";
     params.push(parseInt(limit));
   } else {
-    sql += " LIMIT 100";
+    sql += " LIMIT 1000"; // Augmenté pour permettre l'export
   }
   
   pool.query(sql, params, (err, results) => {
@@ -726,141 +726,139 @@ app.get('/api/analyses/cacao', (req, res) => {
 });
 
 // ===============================================
-// MODIFICATION DE LA ROUTE DE VALIDATION EXISTANTE
-// Pour mettre à jour validation_bv en même temps
+// NOUVELLE ROUTE : Exporter analyses cacao au format texte
 // ===============================================
-app.post('/api/analyses/valider', async (req, res) => {
-  const { analysesIds, valider } = req.body;
+app.get('/api/analyses/cacao/export-txt', (req, res) => {
+  const { 
+    codeSecret, dateDebut, dateFin, campagne, ville, 
+    exportateur, conforme, seulementValidees 
+  } = req.query;
   
-  if (!analysesIds || !Array.isArray(analysesIds) || analysesIds.length === 0) {
-    return res.status(400).json({ error: "Liste d'analyses invalide" });
+  let sql = `
+    SELECT 
+      ka.*,
+      rc.CODE_SECRET_CODIFICATION,
+      l.NUM_LOTS,
+      e.RAISONSOCIALE_EXPORTATEUR,
+      d.REF_DEMANDE,
+      d.AUT_DEMANDE,
+      p.LIBELLE_PRODUIT,
+      d.CAMP_DEMANDE,
+      d.VILLE_DEMANDE,
+      u.NOM_UTILISATEURS as NOM_ANALYSEUR
+    FROM kko_analyses ka
+    LEFT JOIN registre_codification rc ON ka.ID_CODIFICATION = rc.ID_CODIFICATION
+    LEFT JOIN resgistre_sondage rs ON rc.ID_SONDAGE = rs.ID_SONDAGE
+    LEFT JOIN lots l ON rs.ID_Lot = l.ID_LOTS
+    LEFT JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
+    LEFT JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
+    LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
+    LEFT JOIN utilisateurs u ON ka.ANALYSEUR_ANALYSE_KKO = u.ID_UTILISATEURS
+    WHERE 1=1
+  `;
+  
+  const params = [];
+  
+  // Filtrer uniquement les analyses validées si demandé
+  if (seulementValidees === 'true') {
+    sql += " AND ka.VALIDER_ANALYSE_KKO = 1";
   }
   
-  const validerInt = valider ? 1 : 0;
-  const validateurId = 7;
+  // Filtres existants
+  if (codeSecret) {
+    sql += " AND rc.CODE_SECRET_CODIFICATION LIKE ?";
+    params.push(`%${codeSecret}%`);
+  }
   
-  try {
-    // 1. Mettre à jour kko_analyses
-    await new Promise((resolve, reject) => {
-      pool.query(
-        "UPDATE kko_analyses SET VALIDER_ANALYSE_KKO = ? WHERE ID_ANALYSE_KKO IN (?)",
-        [validerInt, analysesIds],
-        (err, result) => {
-          if (err) reject(err);
-          else resolve(result);
-        }
-      );
-    });
-    
-    // 2. Si validation, enregistrer dans validation_bv
-    if (valider) {
-      for (const analyseId of analysesIds) {
-        // Vérifier si déjà dans validation_bv
-        const existeDeja = await new Promise((resolve, reject) => {
-          pool.query(
-            "SELECT ID_VALIDATION_BV FROM validation_bv WHERE ID_ANALYSE_KKO = ?",
-            [analyseId],
-            (err, results) => {
-              if (err) reject(err);
-              else resolve(results.length > 0);
-            }
-          );
-        });
-        
-        if (!existeDeja) {
-          // Récupérer les données
-          const analyseData = await new Promise((resolve, reject) => {
-            pool.query(`
-              SELECT 
-                kko.*,
-                rc.CODE_SECRET_CODIFICATION,
-                l.NUM_LOTS,
-                e.RAISONSOCIALE_EXPORTATEUR,
-                d.REF_DEMANDE,
-                d.AUT_DEMANDE,
-                d.CAMP_DEMANDE,
-                d.VILLE_DEMANDE,
-                u.NOM_UTILISATEURS as NOM_ANALYSEUR
-              FROM kko_analyses kko
-              LEFT JOIN registre_codification rc ON kko.ID_CODIFICATION = rc.ID_CODIFICATION
-              LEFT JOIN resgistre_sondage rs ON rc.ID_SONDAGE = rs.ID_SONDAGE
-              LEFT JOIN lots l ON rs.ID_Lot = l.ID_LOTS
-              LEFT JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
-              LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
-              LEFT JOIN utilisateurs u ON kko.ANALYSEUR_ANALYSE_KKO = u.ID_UTILISATEURS
-              WHERE kko.ID_ANALYSE_KKO = ?
-            `, [analyseId], (err, results) => {
-              if (err) reject(err);
-              else resolve(results[0]);
-            });
-          });
-          
-          if (analyseData) {
-            // Insérer dans validation_bv
-            await new Promise((resolve, reject) => {
-              const sql = `
-                INSERT INTO validation_bv (
-                  ID_ANALYSE_KKO, VALIDATEUR_ID, STATUT_VALIDATION,
-                  CODE_SECRET_CODIFICATION, REF_DEMANDE, AUT_DEMANDE,
-                  RAISONSOCIALE_EXPORTATEUR, NUM_LOTS, NOM_ANALYSEUR,
-                  CAMP_DEMANDE, VILLE_DEMANDE, DATE_ANALYSE_KKO,
-                  POIDS_BRISURES, POIDS_DECHET, POIDS_CRABOT, POIDS_ETRANGERES,
-                  GRAINAGE, TAUXHUMIDITE, MOISIE_CALCULE, MITEE_CALCULE,
-                  ARDOISEE_CALCULE, PLATE_CALCULE, GERMEE_CALCULE, VIOLETTE_CALCULE,
-                  NORME_IVOIRIENNE, NORME_INTERNATIONALE, CONFORME, REMARQUE,
-                  POIDS_DECLARATION, POIDS_ECHAN_ANALYSE_KKO, POIDS_TOTAL_ECHANTILLON
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-              `;
-              
-              pool.query(sql, [
-                analyseId, validateurId, 'VALIDEE',
-                analyseData.CODE_SECRET_CODIFICATION || '',
-                analyseData.REF_DEMANDE || '',
-                analyseData.AUT_DEMANDE || '',
-                analyseData.RAISONSOCIALE_EXPORTATEUR || '',
-                analyseData.NUM_LOTS || '',
-                analyseData.NOM_ANALYSEUR || '',
-                analyseData.CAMP_DEMANDE || '',
-                analyseData.VILLE_DEMANDE || '',
-                analyseData.DATE_ANALYSE_KKO || new Date(),
-                analyseData.POIDS_BRISURES || 0,
-                analyseData.POIDS_DECHET || 0,
-                analyseData.POIDS_CRABOT || 0,
-                analyseData.POIDS_ETRANGERES || 0,
-                analyseData.GRAINAGE || 0,
-                analyseData.TAUXHUMIDITE || 0,
-                analyseData.MOISIE_CALCULE || 0,
-                analyseData.MITEE_CALCULE || 0,
-                analyseData.ARDOISEE_CALCULE || 0,
-                analyseData.PLATE_CALCULE || 0,
-                analyseData.GERMEE_CALCULE || 0,
-                analyseData.VIOLETTE_CALCULE || 0,
-                analyseData.NORME_IVOIRIENNE || '',
-                analyseData.NORME_INTERNATIONALE || '',
-                analyseData.CONFORME || 0,
-                analyseData.REMARQUE || '',
-                analyseData.POIDS_DECLARATION || 0,
-                analyseData.POIDS_ECHAN_ANALYSE_KKO || 0,
-                analyseData.POIDS_TOTAL_ECHANTILLON || 0
-              ], (err) => {
-                if (err) reject(err);
-                else resolve();
-              });
-            });
-          }
-        }
-      }
+  if (dateDebut) {
+    sql += " AND DATE(ka.DATE_ANALYSE_KKO) >= ?";
+    params.push(dateDebut);
+  }
+  
+  if (dateFin) {
+    sql += " AND DATE(ka.DATE_ANALYSE_KKO) <= ?";
+    params.push(dateFin);
+  }
+  
+  if (campagne && campagne !== 'all') {
+    sql += " AND d.CAMP_DEMANDE = ?";
+    params.push(campagne);
+  }
+  
+  if (ville && ville !== 'all') {
+    sql += " AND d.VILLE_DEMANDE = ?";
+    params.push(ville);
+  }
+  
+  if (exportateur && exportateur !== 'all') {
+    sql += " AND e.RAISONSOCIALE_EXPORTATEUR LIKE ?";
+    params.push(`%${exportateur}%`);
+  }
+  
+  if (conforme && conforme !== 'all') {
+    const conformeBool = conforme === 'conforme' ? 1 : 0;
+    sql += " AND ka.CONFORME = ?";
+    params.push(conformeBool);
+  }
+  
+  sql += " ORDER BY ka.DATE_ANALYSE_KKO DESC";
+  
+  pool.query(sql, params, (err, results) => {
+    if (err) {
+      console.error("Erreur récupération analyses pour export:", err);
+      return res.status(500).json({ error: err.message });
     }
     
-    res.json({ 
-      success: true, 
-      message: `${analysesIds.length} analyse(s) ${valider ? 'validée(s)' : 'rejetée(s)'} avec succès` 
+    if (results.length === 0) {
+      return res.status(404).json({ error: 'Aucune analyse à exporter' });
+    }
+    
+    // Créer le contenu du fichier texte
+    let content = "REF DEMANDE\tAUTORISATION\tEXPORTATEUR\tN°LOT\tCAMPAGNE\tDATE D'ANALYSE\tBRISURE\tDÉCHET\tCRABOT\tMATIÈRE ÉTRANGÈRE\tGRAINAGE\tHUMIDITÉ\tMOISIE\tMITÉE\tARDOISÉE\tPLATE\tGEMMÉE\tVIOLETTE\tDÉFECTUEUSE\tNORME IVOIRIENNE\tNORME INTERNATIONALE\tCONFORMITÉ\n";
+    
+    results.forEach(analyse => {
+      // Calculer les défectueuses
+      const totalDefectueuses = ((analyse.GERMEE_CALCULE || 0) + 
+                                (analyse.PLATE_CALCULE || 0) + 
+                                (analyse.MITEE_CALCULE || 0)).toFixed(3);
+      
+      // Formater la date
+      const dateAnalyse = analyse.DATE_ANALYSE_KKO 
+        ? new Date(analyse.DATE_ANALYSE_KKO).toLocaleDateString('fr-FR')
+        : '';
+      
+      // Ajouter la ligne
+      content += `${analyse.REF_DEMANDE || ''}\t` +
+                `${analyse.AUT_DEMANDE || ''}\t` +
+                `${analyse.RAISONSOCIALE_EXPORTATEUR || ''}\t` +
+                `${analyse.NUM_LOTS || ''}\t` +
+                `${analyse.CAMP_DEMANDE || ''}\t` +
+                `${dateAnalyse}\t` +
+                `${(analyse.POIDS_BRISURES || 0).toFixed(3)}\t` +
+                `${(analyse.POIDS_DECHET || 0).toFixed(3)}\t` +
+                `${(analyse.POIDS_CRABOT || 0).toFixed(3)}\t` +
+                `${(analyse.POIDS_ETRANGERES || 0).toFixed(3)}\t` +
+                `${(analyse.GRAINAGE || 0).toFixed(3)}\t` +
+                `${(analyse.TAUXHUMIDITE || 0).toFixed(1)}\t` +
+                `${(analyse.MOISIE_CALCULE || 0).toFixed(2)}\t` +
+                `${(analyse.MITEE_CALCULE || 0).toFixed(2)}\t` +
+                `${(analyse.ARDOISEE_CALCULE || 0).toFixed(2)}\t` +
+                `${(analyse.PLATE_CALCULE || 0).toFixed(2)}\t` +
+                `${(analyse.GERMEE_CALCULE || 0).toFixed(2)}\t` +
+                `${(analyse.VIOLETTE_CALCULE || 0).toFixed(2)}\t` +
+                `${totalDefectueuses}\t` +
+                `${analyse.NORME_IVOIRIENNE || ''}\t` +
+                `${analyse.NORME_INTERNATIONALE || ''}\t` +
+                `${analyse.CONFORME === 1 ? 'Conforme' : 'Non Conforme'}\n`;
     });
     
-  } catch (error) {
-    console.error("Erreur validation analyses:", error);
-    res.status(500).json({ error: error.message });
-  }
+    // Définir les en-têtes pour le téléchargement
+    const filename = `analyses_cacao_${new Date().toISOString().split('T')[0]}.txt`;
+    
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(content);
+  });
 });
 
 // ===============================================
@@ -1016,16 +1014,17 @@ app.delete('/api/analyses/:id', (req, res) => {
 // ROUTES POUR LA VALIDATION BV (Nouveau)
 // ===============================================
 
-// Route pour valider des analyses et les enregistrer dans validation_bv
-app.post('/api/analyses/valider-bv', async (req, res) => {
-  const { analysesIds, valider } = req.body;
+// ===============================================
+// ROUTE CORRIGÉE : Transférer de analysevalider vers validation_bv
+// ===============================================
+app.post('/api/analyses/transfert-validation-bv', async (req, res) => {
+  const { analysesIds } = req.body;
   
   if (!analysesIds || !Array.isArray(analysesIds) || analysesIds.length === 0) {
     return res.status(400).json({ error: "Liste d'analyses invalide" });
   }
   
-  const statut = valider ? 'VALIDEE' : 'REJETEE';
-  const validateurId = 7; // ID du validateur par défaut (Ange Man)
+  const validateurId = 7; // ID du validateur par défaut
   
   try {
     const results = [];
@@ -1033,7 +1032,22 @@ app.post('/api/analyses/valider-bv', async (req, res) => {
     
     for (const analyseId of analysesIds) {
       try {
-        // Vérifier si l'analyse existe déjà dans validation_bv
+        // 1. Vérifier que l'analyse existe dans analysevalider
+        const analyseValider = await new Promise((resolve, reject) => {
+          pool.query(`
+            SELECT * FROM analysevalider WHERE ID_ANALYSE_KKO = ?
+          `, [analyseId], (err, results) => {
+            if (err) reject(err);
+            else resolve(results[0]);
+          });
+        });
+        
+        if (!analyseValider) {
+          errors.push(`Analyse ${analyseId} non trouvée dans analysevalider`);
+          continue;
+        }
+        
+        // 2. Vérifier si déjà dans validation_bv
         const existeDeja = await new Promise((resolve, reject) => {
           pool.query(
             "SELECT ID_VALIDATION_BV FROM validation_bv WHERE ID_ANALYSE_KKO = ?",
@@ -1046,133 +1060,131 @@ app.post('/api/analyses/valider-bv', async (req, res) => {
         });
         
         if (existeDeja) {
-          // Mettre à jour le statut si déjà existant
-          await new Promise((resolve, reject) => {
-            pool.query(`
-              UPDATE validation_bv 
-              SET STATUT_VALIDATION = ?, 
-                  VALIDATEUR_ID = ?,
-                  VALIDATION_DATE = NOW()
-              WHERE ID_ANALYSE_KKO = ?
-            `, [statut, validateurId, analyseId], (err) => {
-              if (err) reject(err);
-              else resolve();
-            });
-          });
-          
-          results.push({ 
-            id: analyseId, 
-            action: 'mise à jour',
-            statut: statut 
-          });
-        } else if (valider) {
-          // Récupérer les données complètes de l'analyse
-          const analyseData = await new Promise((resolve, reject) => {
-            pool.query(`
-              SELECT 
-                kko.*,
-                rc.CODE_SECRET_CODIFICATION,
-                l.NUM_LOTS,
-                e.RAISONSOCIALE_EXPORTATEUR,
-                d.REF_DEMANDE,
-                d.AUT_DEMANDE,
-                d.CAMP_DEMANDE,
-                d.VILLE_DEMANDE,
-                u.NOM_UTILISATEURS as NOM_ANALYSEUR
-              FROM kko_analyses kko
-              LEFT JOIN registre_codification rc ON kko.ID_CODIFICATION = rc.ID_CODIFICATION
-              LEFT JOIN resgistre_sondage rs ON rc.ID_SONDAGE = rs.ID_SONDAGE
-              LEFT JOIN lots l ON rs.ID_Lot = l.ID_LOTS
-              LEFT JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
-              LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
-              LEFT JOIN utilisateurs u ON kko.ANALYSEUR_ANALYSE_KKO = u.ID_UTILISATEURS
-              WHERE kko.ID_ANALYSE_KKO = ?
-            `, [analyseId], (err, results) => {
-              if (err) reject(err);
-              else resolve(results[0]);
-            });
-          });
-          
-          if (!analyseData) {
-            errors.push(`Analyse ${analyseId} non trouvée`);
-            continue;
-          }
-          
-          // Insérer dans validation_bv
-          await new Promise((resolve, reject) => {
-            const sql = `
-              INSERT INTO validation_bv (
-                ID_ANALYSE_KKO, VALIDATEUR_ID, STATUT_VALIDATION,
-                CODE_SECRET_CODIFICATION, REF_DEMANDE, AUT_DEMANDE,
-                RAISONSOCIALE_EXPORTATEUR, NUM_LOTS, NOM_ANALYSEUR,
-                CAMP_DEMANDE, VILLE_DEMANDE, DATE_ANALYSE_KKO,
-                POIDS_BRISURES, POIDS_DECHET, POIDS_CRABOT, POIDS_ETRANGERES,
-                GRAINAGE, TAUXHUMIDITE, MOISIE_CALCULE, MITEE_CALCULE,
-                ARDOISEE_CALCULE, PLATE_CALCULE, GERMEE_CALCULE, VIOLETTE_CALCULE,
-                NORME_IVOIRIENNE, NORME_INTERNATIONALE, CONFORME, REMARQUE,
-                POIDS_DECLARATION, POIDS_ECHAN_ANALYSE_KKO, POIDS_TOTAL_ECHANTILLON,
-                MOISIE_TOTAL, MITEE_TOTAL, ARDOISEE_TOTAL, PLATE_TOTAL, GERMEE_TOTAL, VIOLETTE_TOTAL,
-                TAUXBRISURE, TAUXDECHETS, TAUXCRABOT, TAUXMATIERE, TOTAL_DEFECTUEUSES
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `;
-            
-            const values = [
-              analyseId,
-              validateurId,
-              statut,
-              analyseData.CODE_SECRET_CODIFICATION || '',
-              analyseData.REF_DEMANDE || '',
-              analyseData.AUT_DEMANDE || '',
-              analyseData.RAISONSOCIALE_EXPORTATEUR || '',
-              analyseData.NUM_LOTS || '',
-              analyseData.NOM_ANALYSEUR || '',
-              analyseData.CAMP_DEMANDE || '',
-              analyseData.VILLE_DEMANDE || '',
-              analyseData.DATE_ANALYSE_KKO || new Date(),
-              analyseData.POIDS_BRISURES || 0,
-              analyseData.POIDS_DECHET || 0,
-              analyseData.POIDS_CRABOT || 0,
-              analyseData.POIDS_ETRANGERES || 0,
-              analyseData.GRAINAGE || 0,
-              analyseData.TAUXHUMIDITE || 0,
-              analyseData.MOISIE_CALCULE || 0,
-              analyseData.MITEE_CALCULE || 0,
-              analyseData.ARDOISEE_CALCULE || 0,
-              analyseData.PLATE_CALCULE || 0,
-              analyseData.GERMEE_CALCULE || 0,
-              analyseData.VIOLETTE_CALCULE || 0,
-              analyseData.NORME_IVOIRIENNE || '',
-              analyseData.NORME_INTERNATIONALE || '',
-              analyseData.CONFORME || 0,
-              analyseData.REMARQUE || '',
-              analyseData.POIDS_DECLARATION || 0,
-              analyseData.POIDS_ECHAN_ANALYSE_KKO || 0,
-              analyseData.POIDS_TOTAL_ECHANTILLON || 0,
-              analyseData.MOISIE_TOTAL || 0,
-              analyseData.MITEE_TOTAL || 0,
-              analyseData.ARDOISEE_TOTAL || 0,
-              analyseData.PLATE_TOTAL || 0,
-              analyseData.GERMEE_TOTAL || 0,
-              analyseData.VIOLETTE_TOTAL || 0,
-              analyseData.TAUXBRISURE || 0,
-              analyseData.TAUXDECHETS || 0,
-              analyseData.TAUXCRABOT || 0,
-              analyseData.TAUXMATIERE || 0,
-              analyseData.TOTAL_DEFECTUEUSES || 0
-            ];
-            
-            pool.query(sql, values, (err) => {
-              if (err) reject(err);
-              else resolve();
-            });
-          });
-          
-          results.push({ 
-            id: analyseId, 
-            action: 'insertion',
-            statut: statut 
-          });
+          errors.push(`Analyse ${analyseId} déjà présente dans validation_bv`);
+          continue;
         }
+        
+        // 3. Récupérer les données complètes de kko_analyses
+        const analyseComplete = await new Promise((resolve, reject) => {
+          pool.query(`
+            SELECT 
+              ka.*,
+              rc.CODE_SECRET_CODIFICATION,
+              l.NUM_LOTS,
+              e.RAISONSOCIALE_EXPORTATEUR,
+              d.REF_DEMANDE,
+              d.AUT_DEMANDE,
+              d.CAMP_DEMANDE,
+              d.VILLE_DEMANDE,
+              u.NOM_UTILISATEURS as NOM_ANALYSEUR
+            FROM kko_analyses ka
+            LEFT JOIN registre_codification rc ON ka.ID_CODIFICATION = rc.ID_CODIFICATION
+            LEFT JOIN resgistre_sondage rs ON rc.ID_SONDAGE = rs.ID_SONDAGE
+            LEFT JOIN lots l ON rs.ID_Lot = l.ID_LOTS
+            LEFT JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
+            LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
+            LEFT JOIN utilisateurs u ON ka.ANALYSEUR_ANALYSE_KKO = u.ID_UTILISATEURS
+            WHERE ka.ID_ANALYSE_KKO = ?
+          `, [analyseId], (err, results) => {
+            if (err) reject(err);
+            else resolve(results[0]);
+          });
+        });
+        
+        if (!analyseComplete) {
+          errors.push(`Données complètes non trouvées pour analyse ${analyseId}`);
+          continue;
+        }
+        
+        // 4. Calculer les valeurs manquantes
+        const totalDefectueuses = (
+          (parseFloat(analyseComplete.GERMEE_CALCULE) || 0) +
+          (parseFloat(analyseComplete.PLATE_CALCULE) || 0) +
+          (parseFloat(analyseComplete.MITEE_CALCULE) || 0)
+        ).toFixed(3);
+        
+        const tauxBrisure = ((parseFloat(analyseComplete.POIDS_BRISURES) || 0) / 300 * 100).toFixed(1);
+        const tauxDechets = (
+          ((parseFloat(analyseComplete.POIDS_DECHET) || 0) / 
+          (parseFloat(analyseComplete.POIDS_DECLARATION) || 1)) * 100
+        ).toFixed(1);
+        const tauxCrabot = ((parseFloat(analyseComplete.POIDS_CRABOT) || 0) / 300 * 100).toFixed(1);
+        const tauxMatiere = ((parseFloat(analyseComplete.POIDS_ETRANGERES) || 0) / 300 * 100).toFixed(1);
+        
+        // 5. Insérer dans validation_bv
+        await new Promise((resolve, reject) => {
+          pool.query(`
+            INSERT INTO validation_bv (
+              ID_ANALYSE_KKO, VALIDATEUR_ID, STATUT_VALIDATION,
+              CODE_SECRET_CODIFICATION, REF_DEMANDE, AUT_DEMANDE,
+              RAISONSOCIALE_EXPORTATEUR, NUM_LOTS, NOM_ANALYSEUR,
+              CAMP_DEMANDE, VILLE_DEMANDE, DATE_ANALYSE_KKO,
+              POIDS_BRISURES, POIDS_DECHET, POIDS_CRABOT, POIDS_ETRANGERES,
+              GRAINAGE, TAUXHUMIDITE, MOISIE_CALCULE, MITEE_CALCULE,
+              ARDOISEE_CALCULE, PLATE_CALCULE, GERMEE_CALCULE, VIOLETTE_CALCULE,
+              NORME_IVOIRIENNE, NORME_INTERNATIONALE, CONFORME, REMARQUE,
+              POIDS_DECLARATION, POIDS_ECHAN_ANALYSE_KKO, POIDS_TOTAL_ECHANTILLON,
+              MOISIE_TOTAL, MITEE_TOTAL, ARDOISEE_TOTAL, PLATE_TOTAL, 
+              GERMEE_TOTAL, VIOLETTE_TOTAL,
+              TAUXBRISURE, TAUXDECHETS, TAUXCRABOT, TAUXMATIERE, TOTAL_DEFECTUEUSES,
+              VALIDATION_DATE
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+          `, [
+            analyseId,
+            validateurId,
+            'VALIDEE',
+            analyseComplete.CODE_SECRET_CODIFICATION || '',
+            analyseComplete.REF_DEMANDE || '',
+            analyseComplete.AUT_DEMANDE || '',
+            analyseComplete.RAISONSOCIALE_EXPORTATEUR || '',
+            analyseComplete.NUM_LOTS || '',
+            analyseComplete.NOM_ANALYSEUR || '',
+            analyseComplete.CAMP_DEMANDE || '',
+            analyseComplete.VILLE_DEMANDE || '',
+            analyseComplete.DATE_ANALYSE_KKO || new Date(),
+            analyseComplete.POIDS_BRISURES || 0,
+            analyseComplete.POIDS_DECHET || 0,
+            analyseComplete.POIDS_CRABOT || 0,
+            analyseComplete.POIDS_ETRANGERES || 0,
+            analyseComplete.GRAINAGE || 0,
+            analyseComplete.TAUXHUMIDITE || 0,
+            analyseComplete.MOISIE_CALCULE || 0,
+            analyseComplete.MITEE_CALCULE || 0,
+            analyseComplete.ARDOISEE_CALCULE || 0,
+            analyseComplete.PLATE_CALCULE || 0,
+            analyseComplete.GERMEE_CALCULE || 0,
+            analyseComplete.VIOLETTE_CALCULE || 0,
+            analyseComplete.NORME_IVOIRIENNE || '',
+            analyseComplete.NORME_INTERNATIONALE || '',
+            analyseComplete.CONFORME || 0,
+            analyseComplete.REMARQUE || '',
+            analyseComplete.POIDS_DECLARATION || 0,
+            analyseComplete.POIDS_ECHAN_ANALYSE_KKO || 0,
+            analyseComplete.POIDS_TOTAL_ECHANTILLON || 0,
+            analyseComplete.MOISIE_TOTAL || 0,
+            analyseComplete.MITEE_TOTAL || 0,
+            analyseComplete.ARDOISEE_TOTAL || 0,
+            analyseComplete.PLATE_TOTAL || 0,
+            analyseComplete.GERMEE_TOTAL || 0,
+            analyseComplete.VIOLETTE_TOTAL || 0,
+            tauxBrisure,
+            tauxDechets,
+            tauxCrabot,
+            tauxMatiere,
+            totalDefectueuses
+          ], (err) => {
+            if (err) reject(err);
+            else resolve();
+          });
+        });
+        
+        // 6. Le trigger after_validation_bv_insert mettra à jour kko_analyses automatiquement
+        
+        results.push({ 
+          id: analyseId, 
+          action: 'transfert_validation_bv',
+          statut: 'VALIDEE'
+        });
         
       } catch (error) {
         errors.push(`Erreur sur analyse ${analyseId}: ${error.message}`);
@@ -1180,23 +1192,7 @@ app.post('/api/analyses/valider-bv', async (req, res) => {
       }
     }
     
-    // Mettre à jour le statut dans kko_analyses
-    if (valider) {
-      await new Promise((resolve, reject) => {
-        pool.query(
-          "UPDATE kko_analyses SET VALIDER_ANALYSE_KKO = 1 WHERE ID_ANALYSE_KKO IN (?)",
-          [analysesIds],
-          (err) => {
-            if (err) reject(err);
-            else resolve();
-          }
-        );
-      });
-    }
-    
-    const message = valider 
-      ? `${results.length} analyse(s) validée(s) et enregistrée(s) dans validation_bv`
-      : `${results.length} analyse(s) rejetée(s)`;
+    const message = `${results.length} analyse(s) transférée(s) vers validation_bv`;
     
     res.json({ 
       success: true, 
@@ -1206,11 +1202,275 @@ app.post('/api/analyses/valider-bv', async (req, res) => {
     });
     
   } catch (error) {
-    console.error("Erreur validation BV:", error);
+    console.error("Erreur transfert validation_bv:", error);
     res.status(500).json({ 
-      error: "Erreur serveur lors de la validation",
+      error: "Erreur serveur lors du transfert",
       details: error.message 
     });
+  }
+});
+
+// Route pour valider des analyses (ResultatsAnalyses → analysevalider)
+app.post('/api/analyses/valider', async (req, res) => {
+  const { analysesIds, valider } = req.body;
+  
+  if (!analysesIds || !Array.isArray(analysesIds) || analysesIds.length === 0) {
+    return res.status(400).json({ error: "Liste d'analyses invalide" });
+  }
+  
+  const validerInt = valider ? 1 : 0;
+  const action = valider ? 'validate' : 'reject';
+  const statut = valider ? 'validé' : 'rejeté';
+  const validateurId = 7; // ID du validateur par défaut
+  
+  try {
+    const results = [];
+    const errors = [];
+    
+    for (const analyseId of analysesIds) {
+      try {
+        // Vérifier si l'analyse existe déjà dans analysevalider
+        const existeDeja = await new Promise((resolve, reject) => {
+          pool.query(
+            "SELECT ID_ANALYSE_VALIDER FROM analysevalider WHERE ID_ANALYSE_KKO = ?",
+            [analyseId],
+            (err, results) => {
+              if (err) reject(err);
+              else resolve(results.length > 0);
+            }
+          );
+        });
+        
+        if (existeDeja) {
+          errors.push(`Analyse ${analyseId} déjà validée`);
+          continue;
+        }
+        
+        // Récupérer les données de l'analyse avec toutes les jointures
+        const analyseData = await new Promise((resolve, reject) => {
+          pool.query(`
+            SELECT 
+              ka.*,
+              rc.CODE_SECRET_CODIFICATION,
+              l.NUM_LOTS,
+              e.RAISONSOCIALE_EXPORTATEUR,
+              p.LIBELLE_PRODUIT,
+              d.CAMP_DEMANDE,
+              d.VILLE_DEMANDE
+            FROM kko_analyses ka
+            LEFT JOIN registre_codification rc ON ka.ID_CODIFICATION = rc.ID_CODIFICATION
+            LEFT JOIN resgistre_sondage rs ON rc.ID_SONDAGE = rs.ID_SONDAGE
+            LEFT JOIN lots l ON rs.ID_Lot = l.ID_LOTS
+            LEFT JOIN demandes d ON l.ID_DEMANDE = d.ID_DEMANDE
+            LEFT JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
+            LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
+            WHERE ka.ID_ANALYSE_KKO = ?
+          `, [analyseId], (err, results) => {
+            if (err) reject(err);
+            else resolve(results[0]);
+          });
+        });
+        
+        if (!analyseData) {
+          errors.push(`Analyse ${analyseId} non trouvée`);
+          continue;
+        }
+        
+        // Insérer dans analysevalider
+        await new Promise((resolve, reject) => {
+          pool.query(`
+            INSERT INTO analysevalider (
+              ID_ANALYSE_KKO, CODE_SECRET_CODIFICATION, DATE_VALIDATION, VALIDATEUR_ID, ACTION,
+              NORME_IVOIRIENNE, NORME_INTERNATIONALE, CONFORME, REMARQUE, STATUT,
+              POIDS_BRISURES, POIDS_DECHET, POIDS_CRABOT, POIDS_ETRANGERES,
+              GRAINAGE, TAUXHUMIDITE, MOISIE_CALCULE, MITEE_CALCULE, ARDOISEE_CALCULE,
+              PLATE_CALCULE, GERMEE_CALCULE, VIOLETTE_CALCULE,
+              NUM_LOTS, RAISONSOCIALE_EXPORTATEUR, LIBELLE_PRODUIT,
+              CAMP_DEMANDE, VILLE_DEMANDE
+            ) VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `, [
+            analyseId,
+            analyseData.CODE_SECRET_CODIFICATION || '',
+            validateurId,
+            action,
+            analyseData.NORME_IVOIRIENNE || '',
+            analyseData.NORME_INTERNATIONALE || '',
+            analyseData.CONFORME || 0,
+            analyseData.REMARQUE || '',
+            statut,
+            analyseData.POIDS_BRISURES || 0,
+            analyseData.POIDS_DECHET || 0,
+            analyseData.POIDS_CRABOT || 0,
+            analyseData.POIDS_ETRANGERES || 0,
+            analyseData.GRAINAGE || 0,
+            analyseData.TAUXHUMIDITE || 0,
+            analyseData.MOISIE_CALCULE || 0,
+            analyseData.MITEE_CALCULE || 0,
+            analyseData.ARDOISEE_CALCULE || 0,
+            analyseData.PLATE_CALCULE || 0,
+            analyseData.GERMEE_CALCULE || 0,
+            analyseData.VIOLETTE_CALCULE || 0,
+            analyseData.NUM_LOTS || '',
+            analyseData.RAISONSOCIALE_EXPORTATEUR || '',
+            analyseData.LIBELLE_PRODUIT || '',
+            analyseData.CAMP_DEMANDE || '',
+            analyseData.VILLE_DEMANDE || ''
+          ], (err) => {
+            if (err) reject(err);
+            else resolve();
+          });
+        });
+        
+        // Mettre à jour le statut dans kko_analyses
+        await new Promise((resolve, reject) => {
+          pool.query(
+            "UPDATE kko_analyses SET VALIDER_ANALYSE_KKO = ? WHERE ID_ANALYSE_KKO = ?",
+            [validerInt, analyseId],
+            (err) => {
+              if (err) reject(err);
+              else resolve();
+            }
+          );
+        });
+        
+        results.push({
+          id: analyseId,
+          codeSecret: analyseData.CODE_SECRET_CODIFICATION,
+          success: true
+        });
+        
+      } catch (error) {
+        errors.push(`Erreur sur analyse ${analyseId}: ${error.message}`);
+      }
+    }
+    
+    const message = `${results.length} analyse(s) ${valider ? 'validée(s)' : 'rejetée(s)'} avec succès`;
+    
+    res.json({ 
+      success: true, 
+      message,
+      results,
+      errors: errors.length > 0 ? errors : undefined
+    });
+    
+  } catch (error) {
+    console.error("Erreur validation analyses:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Route pour valider BV (ValidationCacao → analysevaliderbv)
+app.post('/api/analyses/valider-bv', async (req, res) => {
+  const { analysesIds, valider } = req.body;
+  
+  if (!analysesIds || !Array.isArray(analysesIds) || analysesIds.length === 0) {
+    return res.status(400).json({ error: "Liste d'analyses invalide" });
+  }
+  
+  const validateurId = 7; // ID du validateur par défaut
+  
+  try {
+    const results = [];
+    const errors = [];
+    
+    for (const analyseId of analysesIds) {
+      try {
+        // Vérifier si l'analyse existe dans analysevalider
+        const existeDansAnalysevalider = await new Promise((resolve, reject) => {
+          pool.query(
+            "SELECT * FROM analysevalider WHERE ID_ANALYSE_KKO = ?",
+            [analyseId],
+            (err, results) => {
+              if (err) reject(err);
+              else resolve(results[0]);
+            }
+          );
+        });
+        
+        if (!existeDansAnalysevalider) {
+          errors.push(`Analyse ${analyseId} non trouvée dans analysevalider`);
+          continue;
+        }
+        
+        // Vérifier si déjà dans analysevaliderbv
+        const existeDejaBV = await new Promise((resolve, reject) => {
+          pool.query(
+            "SELECT ID_ANALYSE_VALIDER FROM analysevaliderbv WHERE ID_ANALYSE_KKO = ?",
+            [analyseId],
+            (err, results) => {
+              if (err) reject(err);
+              else resolve(results.length > 0);
+            }
+          );
+        });
+        
+        if (existeDejaBV) {
+          errors.push(`Analyse ${analyseId} déjà validée dans BV`);
+          continue;
+        }
+        
+        // Insérer dans analysevaliderbv
+        await new Promise((resolve, reject) => {
+          pool.query(`
+            INSERT INTO analysevaliderbv (
+              ID_ANALYSE_KKO, CODE_SECRET_CODIFICATION, DATE_VALIDATION, VALIDATEUR_ID, ACTION,
+              NORME_IVOIRIENNE, NORME_INTERNATIONALE, CONFORME, REMARQUE, STATUT,
+              POIDS_BRISURES, POIDS_DECHET, POIDS_CRABOT, POIDS_ETRANGERES,
+              GRAINAGE, TAUXHUMIDITE, MOISIE_CALCULE, MITEE_CALCULE, ARDOISEE_CALCULE,
+              PLATE_CALCULE, GERMEE_CALCULE, VIOLETTE_CALCULE,
+              NUM_LOTS, RAISONSOCIALE_EXPORTATEUR, LIBELLE_PRODUIT,
+              CAMP_DEMANDE, VILLE_DEMANDE
+            ) VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `, [
+            analyseId,
+            existeDansAnalysevalider.CODE_SECRET_CODIFICATION,
+            validateurId,
+            'validate',
+            existeDansAnalysevalider.NORME_IVOIRIENNE,
+            existeDansAnalysevalider.NORME_INTERNATIONALE,
+            existeDansAnalysevalider.CONFORME,
+            existeDansAnalysevalider.REMARQUE,
+            'validé',
+            existeDansAnalysevalider.POIDS_BRISURES,
+            existeDansAnalysevalider.POIDS_DECHET,
+            existeDansAnalysevalider.POIDS_CRABOT,
+            existeDansAnalysevalider.POIDS_ETRANGERES,
+            existeDansAnalysevalider.GRAINAGE,
+            existeDansAnalysevalider.TAUXHUMIDITE,
+            existeDansAnalysevalider.MOISIE_CALCULE,
+            existeDansAnalysevalider.MITEE_CALCULE,
+            existeDansAnalysevalider.ARDOISEE_CALCULE,
+            existeDansAnalysevalider.PLATE_CALCULE,
+            existeDansAnalysevalider.GERMEE_CALCULE,
+            existeDansAnalysevalider.VIOLETTE_CALCULE,
+            existeDansAnalysevalider.NUM_LOTS,
+            existeDansAnalysevalider.RAISONSOCIALE_EXPORTATEUR,
+            existeDansAnalysevalider.LIBELLE_PRODUIT,
+            existeDansAnalysevalider.CAMP_DEMANDE,
+            existeDansAnalysevalider.VILLE_DEMANDE
+          ], (err) => {
+            if (err) reject(err);
+            else resolve();
+          });
+        });
+        
+        results.push({ id: analyseId, success: true });
+        
+      } catch (error) {
+        errors.push(`Erreur sur analyse ${analyseId}: ${error.message}`);
+      }
+    }
+    
+    res.json({ 
+      success: true, 
+      message: `${results.length} analyse(s) validée(s) BV avec succès`,
+      results,
+      errors: errors.length > 0 ? errors : undefined
+    });
+    
+  } catch (error) {
+    console.error("Erreur validation BV:", error);
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -1866,6 +2126,111 @@ app.post('/api/analyses/valider-legacy', async (req, res) => {
 });
 
 // Route pour récupérer les analyses validées (ancien système)
+// Route pour récupérer les analyses validées (depuis analysevalider)
+app.get('/api/analyses/validees', (req, res) => {
+  const { 
+    dateDebut, dateFin, campagne, ville, exportateur, 
+    statut, limit, page, idAnalyse, codeSecret 
+  } = req.query;
+  
+  let sql = `
+    SELECT 
+      av.*,
+      u.NOM_UTILISATEURS as NOM_VALIDATEUR,
+      ka.DATE_ANALYSE_KKO,
+      ua.NOM_UTILISATEURS as NOM_ANALYSEUR
+    FROM analysevalider av
+    LEFT JOIN utilisateurs u ON av.VALIDATEUR_ID = u.ID_UTILISATEURS
+    LEFT JOIN kko_analyses ka ON av.ID_ANALYSE_KKO = ka.ID_ANALYSE_KKO
+    LEFT JOIN utilisateurs ua ON ka.ANALYSEUR_ANALYSE_KKO = ua.ID_UTILISATEURS
+    WHERE 1=1
+  `;
+  
+  const params = [];
+  
+  // Filtres
+  if (dateDebut) {
+    sql += " AND DATE(av.DATE_VALIDATION) >= ?";
+    params.push(dateDebut);
+  }
+  
+  if (dateFin) {
+    sql += " AND DATE(av.DATE_VALIDATION) <= ?";
+    params.push(dateFin);
+  }
+  
+  if (campagne && campagne !== 'all') {
+    sql += " AND av.CAMP_DEMANDE = ?";
+    params.push(campagne);
+  }
+  
+  if (ville && ville !== 'all') {
+    sql += " AND av.VILLE_DEMANDE = ?";
+    params.push(ville);
+  }
+  
+  if (exportateur && exportateur !== 'all') {
+    sql += " AND av.RAISONSOCIALE_EXPORTATEUR LIKE ?";
+    params.push(`%${exportateur}%`);
+  }
+  
+  if (statut && statut !== 'all') {
+    sql += " AND av.STATUT = ?";
+    params.push(statut);
+  }
+  
+  if (idAnalyse) {
+    sql += " AND av.ID_ANALYSE_KKO = ?";
+    params.push(parseInt(idAnalyse));
+  }
+  
+  if (codeSecret) {
+    sql += " AND av.CODE_SECRET_CODIFICATION = ?";
+    params.push(codeSecret);
+  }
+  
+  sql += " ORDER BY av.DATE_VALIDATION DESC";
+  
+  // Pagination
+  const itemsPerPage = parseInt(limit) || 100;
+  const currentPage = parseInt(page) || 1;
+  const offset = (currentPage - 1) * itemsPerPage;
+  
+  // Requête pour le total
+  const countSql = sql.replace(/SELECT .* FROM/, 'SELECT COUNT(*) as total FROM');
+  
+  pool.query(countSql, params, (countErr, countResults) => {
+    if (countErr) {
+      console.error("Erreur comptage analyses validées:", countErr);
+      return res.status(500).json({ error: countErr.message });
+    }
+    
+    const totalItems = countResults[0].total;
+    const totalPages = Math.ceil(totalItems / itemsPerPage);
+    
+    // Requête pour les données avec pagination
+    sql += " LIMIT ? OFFSET ?";
+    params.push(itemsPerPage, offset);
+    
+    pool.query(sql, params, (err, results) => {
+      if (err) {
+        console.error("Erreur récupération analyses validées:", err);
+        return res.status(500).json({ error: err.message });
+      }
+      
+      res.json({
+        data: results || [],
+        pagination: {
+          total: totalItems,
+          pages: totalPages,
+          currentPage,
+          itemsPerPage
+        }
+      });
+    });
+  });
+});
+
 app.get('/api/analyses/validees-legacy', (req, res) => {
   const { 
     dateDebut, dateFin, campagne, ville, exportateur, 
@@ -2447,6 +2812,11 @@ app.post('/api/demandes', (req, res) => {
     return res.status(400).json({ error: "Champs obligatoires manquants" });
   }
 
+  // Validation de la ville
+  if (!b.ville) {
+    return res.status(400).json({ error: "La ville est obligatoire" });
+  }
+
   const sqlDemande = `
     INSERT INTO demandes (
       REF_DEMANDE, AUT_DEMANDE, CODE_TYPE_DEMANDE, DATEEMI_DEMANDE, DATEREC_DEMANDE,
@@ -2468,7 +2838,7 @@ app.post('/api/demandes', (req, res) => {
     b.natureDemande || 'Nouveau lots',
     b.naturePrestation || 'PREST01',
     b.dateExpiration || null,
-    b.ville || null,
+    b.ville,
   ], (err, result) => {
     if (err) {
       console.error("Erreur insertion demande:", err);
@@ -2476,7 +2846,7 @@ app.post('/api/demandes', (req, res) => {
     }
 
     const demandeId = result.insertId;
-    console.log(`Demande créée avec ID: ${demandeId}, Ville: ${b.ville || 'Non spécifiée'}`);
+    console.log(`Demande créée avec ID: ${demandeId}, Ville: ${b.ville}`);
     if (b.lots && b.lots.length > 0) {
       const lotPromises = b.lots.map(lot => {
         return new Promise((resolve, reject) => {
@@ -2859,17 +3229,16 @@ app.post('/api/codes-secrets/generer-premier', async (req, res) => {
     
     console.log('Code généré:', codeSecret);
     
-    // 5. Insérer dans registre_codification - UTILISER NULL POUR CODE_CODIFICATEUR
+    // 5. Insérer dans registre_codification - SANS CODE_CODIFICATEUR
     const insertResult = await new Promise((resolve, reject) => {
       pool.query(`
         INSERT INTO registre_codification (
           LIBELLE_CODIFICATION,
           CODE_SECRET_CODIFICATION,
           DATE_ENREG_CODIFICATION,
-          CODE_CODIFICATEUR,
           ETAT_CODIFICATION,
           ID_SONDAGE
-        ) VALUES (?, ?, NOW(), NULL, 1, ?)
+        ) VALUES (?, ?, NOW(), 1, ?)
       `, ['1er code', codeSecret, lotCheck[0].ID_SONDAGE], (err, results) => {
         if (err) reject(err);
         else resolve(results);
@@ -3001,17 +3370,16 @@ app.post('/api/codes-secrets/generer-reprise', async (req, res) => {
     
     console.log('Code généré:', codeSecret);
     
-    // 4. Insérer la reprise - UTILISER NULL POUR CODE_CODIFICATEUR
+    // 4. Insérer la reprise - SANS CODE_CODIFICATEUR
     const insertResult = await new Promise((resolve, reject) => {
       pool.query(`
         INSERT INTO registre_codification (
           LIBELLE_CODIFICATION,
           CODE_SECRET_CODIFICATION,
           DATE_ENREG_CODIFICATION,
-          CODE_CODIFICATEUR,
           ETAT_CODIFICATION,
           ID_SONDAGE
-        ) VALUES (?, ?, NOW(), NULL, 1, ?)
+        ) VALUES (?, ?, NOW(), 1, ?)
       `, ['Reprise', codeSecret, lotCheck[0].ID_SONDAGE], (err, results) => {
         if (err) reject(err);
         else resolve(results);
@@ -3178,17 +3546,16 @@ app.post('/api/codes-secrets/generer-selection', async (req, res) => {
               
               console.log(`Code généré pour lot ${lotId}: ${codeSecret}`);
               
-              // Insérer le code - UTILISER NULL POUR CODE_CODIFICATEUR
+              // Insérer le code - SANS CODE_CODIFICATEUR
               await new Promise((resolve, reject) => {
                 pool.query(`
                   INSERT INTO registre_codification (
                     LIBELLE_CODIFICATION,
                     CODE_SECRET_CODIFICATION,
                     DATE_ENREG_CODIFICATION,
-                    CODE_CODIFICATEUR,
                     ETAT_CODIFICATION,
                     ID_SONDAGE
-                  ) VALUES (?, ?, NOW(), NULL, 1, ?)
+                  ) VALUES (?, ?, NOW(), 1, ?)
                 `, ['1er code', codeSecret, lotInfo[0].ID_SONDAGE], (err) => {
                   if (err) {
                     console.error(`Erreur insertion code pour lot ${lotId}:`, err);
@@ -3360,17 +3727,16 @@ app.post('/api/codes-secrets/generer-reprises-selection', async (req, res) => {
             
             console.log(`Code reprise généré pour lot ${lotId}: ${codeSecret}`);
             
-            // Insérer la reprise - UTILISER NULL POUR CODE_CODIFICATEUR
+            // Insérer la reprise - SANS CODE_CODIFICATEUR
             await new Promise((resolve, reject) => {
               pool.query(`
                 INSERT INTO registre_codification (
                   LIBELLE_CODIFICATION,
                   CODE_SECRET_CODIFICATION,
                   DATE_ENREG_CODIFICATION,
-                  CODE_CODIFICATEUR,
                   ETAT_CODIFICATION,
                   ID_SONDAGE
-                ) VALUES (?, ?, NOW(), NULL, 1, ?)
+                ) VALUES (?, ?, NOW(), 1, ?)
               `, ['Reprise', codeSecret, lotInfo[0].ID_SONDAGE], (err) => {
                 if (err) {
                   console.error(`Erreur insertion reprise pour lot ${lotId}:`, err);
@@ -4016,46 +4382,44 @@ app.post('/api/lots/enregistrerSondage', async (req, res) => {
   const cleanedPoidsTotal = toNullable(poidsTotalSondage);
   const cleanedObservation = toNullable(observationSondage);
   
-  // Vérifier que le code sondeur existe dans la table utilisateurs si la décision est "Oui"
+  // Nettoyage et validation du code sondeur
   let cleanedCodeSondeur = toNullable(codeSondeur);
-  if (decisionSondage === 'Oui' && cleanedCodeSondeur !== null) {
+
+  if (decisionSondage === 'Oui') {
+    if (cleanedCodeSondeur !== null && cleanedCodeSondeur !== '') {
       const parsedInt = parseInt(cleanedCodeSondeur);
-      cleanedCodeSondeur = isNaN(parsedInt) ? null : parsedInt;
+      if (isNaN(parsedInt)) {
+        return res.status(400).json({ error: "Code sondeur invalide" });
+      }
+      cleanedCodeSondeur = parsedInt;
       
       // Vérifier que l'utilisateur existe et est un sondeur
-      if (cleanedCodeSondeur) {
-        try {
-          const userCheck = await new Promise((resolve, reject) => {
-            pool.query(`
-              SELECT u.ID_UTILISATEURS 
-              FROM utilisateurs u
-              LEFT JOIN fonctions f ON u.ID_FONCTIONS = f.ID_FONCTIONS
-              WHERE u.ID_UTILISATEURS = ? 
-              AND (f.LIBELLE_FONCTIONS = 'SONDEUR' OR u.ID_FONCTIONS = 10)
-            `, [cleanedCodeSondeur], (err, results) => {
-              if (err) {
-                reject(err);
-              } else {
-                resolve(results);
-              }
-            });
+      try {
+        const userCheck = await new Promise((resolve, reject) => {
+          pool.query(`
+            SELECT u.ID_UTILISATEURS 
+            FROM utilisateurs u
+            LEFT JOIN fonctions f ON u.ID_FONCTIONS = f.ID_FONCTIONS
+            WHERE u.ID_UTILISATEURS = ? 
+            AND (f.LIBELLE_FONCTIONS = 'SONDEUR' OR u.ID_FONCTIONS = 10)
+          `, [cleanedCodeSondeur], (err, results) => {
+            if (err) reject(err);
+            else resolve(results);
           });
-          
-          if (userCheck.length === 0) {
-            return res.status(400).json({ 
-              error: "L'utilisateur sélectionné n'est pas un sondeur valide",
-              codeSondeur: cleanedCodeSondeur
-            });
-          }
-        } catch (err) {
-          console.error("Erreur vérification utilisateur:", err);
-          return res.status(500).json({ error: "Erreur lors de la vérification du sondeur" });
+        });
+        
+        if (userCheck.length === 0) {
+          return res.status(400).json({ 
+            error: "L'utilisateur sélectionné n'est pas un sondeur valide"
+          });
         }
-      } else {
-        return res.status(400).json({ error: "Un sondeur valide doit être sélectionné pour le sondage" });
+      } catch (err) {
+        console.error("Erreur vérification utilisateur:", err);
+        return res.status(500).json({ error: "Erreur lors de la vérification du sondeur" });
       }
-  } else if (decisionSondage === 'Oui') {
-    return res.status(400).json({ error: "Un sondeur doit être sélectionné pour le sondage" });
+    } else {
+      return res.status(400).json({ error: "Un sondeur doit être sélectionné pour le sondage" });
+    }
   }
 
   // Date par défaut si non fournie
@@ -4165,6 +4529,674 @@ app.post('/api/lots/enregistrerSondage', async (req, res) => {
   });
 });
 
+// === NOUVELLES ROUTES POUR LA CONFIGURATION GENERALE ===
+
+// Route pour récupérer les paramètres
+app.get('/api/parametres', (req, res) => {
+  pool.query("SELECT * FROM parametres LIMIT 1", (err, results) => {
+    if (err) {
+      console.error("Erreur récupération paramètres:", err);
+      return res.json({});
+    }
+    res.json(results.length > 0 ? results[0] : {});
+  });
+});
+
+// Route pour sauvegarder les paramètres
+app.post('/api/parametres', (req, res) => {
+  const {
+    CODE_ENTREPRISE, RAISON_SOCIALE, VILLE, ADRESSE, LOGO,
+    TELEPHONE, FAX, EMAIL, LABORATOIRE_ANALYSE, CODE_ARCC,
+    TARESAC_KKO, TARESAC_KFE, PRIX_ANALYSE_KKO, PRIX_ANALYSE_KFE,
+    TAUX_DECHET, TAUX_CRABOT, TAUX_BRISURE, RESPONSABLE_BV,
+    RESPONSABLE_LABO, CODE_LABORATOIRE, CAMPAGNE, CHEF_SONDAGE,
+    SOUSSIGNE, ETAT, GRAINAGE, MATIERE_ETRANGERE,
+    LAST_ID_FACTURE, LAST_CODE_SECRET
+  } = req.body;
+
+  // Vérifier si des paramètres existent déjà
+  pool.query("SELECT COUNT(*) as count FROM parametres", (err, results) => {
+    if (err) {
+      console.error("Erreur vérification paramètres:", err);
+      return res.status(500).json({ error: err.message });
+    }
+
+    const count = results[0].count;
+    
+    let sql;
+    let values;
+
+    if (count > 0) {
+      // Mettre à jour les paramètres existants
+      sql = `
+        UPDATE parametres SET
+          CODE_ENTREPRISE = ?, RAISON_SOCIALE = ?, VILLE = ?, ADRESSE = ?, LOGO = ?,
+          TELEPHONE = ?, FAX = ?, EMAIL = ?, LABORATOIRE_ANALYSE = ?, CODE_ARCC = ?,
+          TARESAC_KKO = ?, TARESAC_KFE = ?, PRIX_ANALYSE_KKO = ?, PRIX_ANALYSE_KFE = ?,
+          TAUX_DECHET = ?, TAUX_CRABOT = ?, TAUX_BRISURE = ?, RESPONSABLE_BV = ?,
+          RESPONSABLE_LABO = ?, CODE_LABORATOIRE = ?, CAMPAGNE = ?, CHEF_SONDAGE = ?,
+          SOUSSIGNE = ?, ETAT = ?, GRAINAGE = ?, MATIERE_ETRANGERE = ?,
+          LAST_ID_FACTURE = ?, LAST_CODE_SECRET = ?
+        WHERE 1=1
+      `;
+      
+      values = [
+        CODE_ENTREPRISE, RAISON_SOCIALE, VILLE, ADRESSE, LOGO,
+        TELEPHONE, FAX, EMAIL, LABORATOIRE_ANALYSE, CODE_ARCC,
+        TARESAC_KKO, TARESAC_KFE, PRIX_ANALYSE_KKO, PRIX_ANALYSE_KFE,
+        TAUX_DECHET, TAUX_CRABOT, TAUX_BRISURE, RESPONSABLE_BV,
+        RESPONSABLE_LABO, CODE_LABORATOIRE, CAMPAGNE, CHEF_SONDAGE,
+        SOUSSIGNE, ETAT, GRAINAGE, MATIERE_ETRANGERE,
+        LAST_ID_FACTURE, LAST_CODE_SECRET
+      ];
+    } else {
+      // Insérer de nouveaux paramètres
+      sql = `
+        INSERT INTO parametres (
+          CODE_ENTREPRISE, RAISON_SOCIALE, VILLE, ADRESSE, LOGO,
+          TELEPHONE, FAX, EMAIL, LABORATOIRE_ANALYSE, CODE_ARCC,
+          TARESAC_KKO, TARESAC_KFE, PRIX_ANALYSE_KKO, PRIX_ANALYSE_KFE,
+          TAUX_DECHET, TAUX_CRABOT, TAUX_BRISURE, RESPONSABLE_BV,
+          RESPONSABLE_LABO, CODE_LABORATOIRE, CAMPAGNE, CHEF_SONDAGE,
+          SOUSSIGNE, ETAT, GRAINAGE, MATIERE_ETRANGERE,
+          LAST_ID_FACTURE, LAST_CODE_SECRET
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `;
+      
+      values = [
+        CODE_ENTREPRISE, RAISON_SOCIALE, VILLE, ADRESSE, LOGO,
+        TELEPHONE, FAX, EMAIL, LABORATOIRE_ANALYSE, CODE_ARCC,
+        TARESAC_KKO, TARESAC_KFE, PRIX_ANALYSE_KKO, PRIX_ANALYSE_KFE,
+        TAUX_DECHET, TAUX_CRABOT, TAUX_BRISURE, RESPONSABLE_BV,
+        RESPONSABLE_LABO, CODE_LABORATOIRE, CAMPAGNE, CHEF_SONDAGE,
+        SOUSSIGNE, ETAT, GRAINAGE, MATIERE_ETRANGERE,
+        LAST_ID_FACTURE, LAST_CODE_SECRET
+      ];
+    }
+
+    pool.query(sql, values, (err, result) => {
+      if (err) {
+        console.error("Erreur sauvegarde paramètres:", err);
+        return res.status(500).json({ error: err.message });
+      }
+
+      res.json({
+        success: true,
+        message: count > 0 ? 'Paramètres mis à jour avec succès' : 'Paramètres enregistrés avec succès'
+      });
+    });
+  });
+});
+
+// === NOUVELLES ROUTES POUR LA GESTION DES FACTURES ===
+
+app.get('/api/factures/demandes-validees', (req, res) => {
+  const { 
+    refDemande, autorisation, exportateur, campagne,
+    dateDebut, dateFin, produit, ville 
+  } = req.query;
+
+  let sql = `
+    SELECT DISTINCT
+      d.ID_DEMANDE,
+      d.REF_DEMANDE,
+      d.AUT_DEMANDE,
+      d.DATEEMI_DEMANDE,
+      d.DATEREC_DEMANDE,
+      d.DATE_EXPIR_DEMANDE,
+      d.CAMP_DEMANDE,
+      d.VILLE_DEMANDE,
+      d.POIDS_DEMANDE,
+      d.ID_PRODUIT,
+      p.LIBELLE_PRODUIT,
+      e.RAISONSOCIALE_EXPORTATEUR,
+      e.MARQUE_EXPORTATEUR,
+      e.VILLE_EXPORTATEUR,
+      d.NBRELOT_DEMANDE,
+      d.ETAT_DEMANDE,
+      d.FACTURE_DEMANDE,
+      
+      -- Compter le nombre total de lots pour cette demande
+      (SELECT COUNT(*) 
+       FROM lots l 
+       WHERE l.ID_DEMANDE = d.ID_DEMANDE) as total_lots,
+      
+      -- Compter le nombre de lots qui ont des analyses validées dans validation_bv
+      (SELECT COUNT(DISTINCT l.ID_LOTS)
+       FROM lots l
+       LEFT JOIN resgistre_sondage rs ON l.ID_LOTS = rs.ID_Lot
+       LEFT JOIN registre_codification rc ON rs.ID_SONDAGE = rc.ID_SONDAGE
+       LEFT JOIN kko_analyses ka ON rc.ID_CODIFICATION = ka.ID_CODIFICATION
+       LEFT JOIN validation_bv vb ON ka.ID_ANALYSE_KKO = vb.ID_ANALYSE_KKO
+       WHERE l.ID_DEMANDE = d.ID_DEMANDE
+       AND vb.STATUT_VALIDATION = 'VALIDEE') as lots_valides_bv,
+      
+      -- Vérifier si une facture existe déjà pour cette demande
+      (SELECT COUNT(*) 
+       FROM factures f 
+       WHERE f.ID_DEMANDES = d.ID_DEMANDE) as facture_existe
+    FROM demandes d
+    LEFT JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
+    LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
+    WHERE 1=1
+  `;
+
+  const params = [];
+
+  // Filtres
+  if (refDemande) {
+    sql += " AND d.REF_DEMANDE LIKE ?";
+    params.push(`%${refDemande}%`);
+  }
+
+  if (autorisation) {
+    sql += " AND d.AUT_DEMANDE LIKE ?";
+    params.push(`%${autorisation}%`);
+  }
+
+  if (exportateur) {
+    sql += " AND e.RAISONSOCIALE_EXPORTATEUR LIKE ?";
+    params.push(`%${exportateur}%`);
+  }
+
+  if (campagne && campagne !== 'all') {
+    sql += " AND d.CAMP_DEMANDE = ?";
+    params.push(campagne);
+  }
+
+  if (produit && produit !== 'all') {
+    sql += " AND d.ID_PRODUIT = ?";
+    params.push(produit);
+  }
+
+  if (ville && ville !== 'all') {
+    sql += " AND d.VILLE_DEMANDE = ?";
+    params.push(ville);
+  }
+
+  if (dateDebut) {
+    sql += " AND DATE(d.DATEEMI_DEMANDE) >= ?";
+    params.push(dateDebut);
+  }
+
+  if (dateFin) {
+    sql += " AND DATE(d.DATEEMI_DEMANDE) <= ?";
+    params.push(dateFin);
+  }
+
+  sql += " ORDER BY d.DATEEMI_DEMANDE DESC";
+
+  pool.query(sql, params, (err, results) => {
+    if (err) {
+      console.error("Erreur récupération demandes validées:", err);
+      return res.status(500).json({ error: err.message });
+    }
+
+    // Filtrer les demandes où tous les lots sont validés dans validation_bv et pas encore facturées
+    const demandesValidees = (results || []).filter(d => 
+      d.total_lots > 0 && 
+      d.lots_valides_bv >= d.total_lots && 
+      d.facture_existe === 0 &&
+      d.FACTURE_DEMANDE !== 1
+    );
+
+    // Pour le débogage, ajouter des informations supplémentaires
+    const demandesAvecDetails = demandesValidees.map(demande => ({
+      ...demande,
+      pourcentage_valides: demande.total_lots > 0 ? 
+        Math.round((demande.lots_valides_bv / demande.total_lots) * 100) : 0
+    }));
+
+    res.json(demandesAvecDetails);
+  });
+});
+
+// Route pour générer un numéro de facture
+app.get('/api/factures/generer-numero', async (req, res) => {
+  try {
+    // Récupérer le dernier ID de facture
+    const parametres = await new Promise((resolve, reject) => {
+      pool.query("SELECT LAST_ID_FACTURE FROM parametres LIMIT 1", (err, results) => {
+        if (err) reject(err);
+        else resolve(results);
+      });
+    });
+
+    let lastId = 0;
+    if (parametres.length > 0) {
+      lastId = parseInt(parametres[0].LAST_ID_FACTURE) || 0;
+    }
+
+    // Incrémenter l'ID
+    const nouvelId = lastId + 1;
+    const anneeEnCours = new Date().getFullYear();
+
+    // Format: 0/2026/BV/ACE-2026
+    const numeroFacture = `${nouvelId.toString().padStart(3, '0')}/${anneeEnCours}/BV/ACE-${anneeEnCours}`;
+
+    res.json({
+      success: true,
+      numeroFacture,
+      nouvelId
+    });
+  } catch (error) {
+    console.error("Erreur génération numéro facture:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Route pour créer une facture
+app.post('/api/factures', async (req, res) => {
+  const {
+    ID_DEMANDES,
+    REF_FACUTRES,
+    CAMPAGNE_FACTURES,
+    DATE_FACTURES,
+    DATEDEPOT_FACTURES,
+    DATEREGLEMENT_FACTUTRES,
+    MONTANT_FACTURES,
+    NBRE_LOTS_FACTURES,
+    EN_LIGNE_FACTURES,
+    VALIDER,
+    CODE_POSTE_CONTROLE,
+    ID_RECAP
+  } = req.body;
+
+  try {
+    // Récupérer les paramètres pour les prix
+    const parametres = await new Promise((resolve, reject) => {
+      pool.query("SELECT PRIX_ANALYSE_KKO, PRIX_ANALYSE_KFE FROM parametres LIMIT 1", (err, results) => {
+        if (err) reject(err);
+        else resolve(results);
+      });
+    });
+
+    // Récupérer les infos de la demande
+    const demande = await new Promise((resolve, reject) => {
+      pool.query(`
+        SELECT d.*, p.LIBELLE_PRODUIT, d.POIDS_DEMANDE 
+        FROM demandes d
+        LEFT JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
+        WHERE d.ID_DEMANDE = ?
+      `, [ID_DEMANDES], (err, results) => {
+        if (err) reject(err);
+        else resolve(results[0]);
+      });
+    });
+
+    if (!demande) {
+      return res.status(404).json({ error: "Demande non trouvée" });
+    }
+
+    // Calculer le montant selon le produit
+    let prixUnitaire = 0;
+    if (demande.ID_PRODUIT === 'KKO') {
+      prixUnitaire = parseFloat(parametres[0]?.PRIX_ANALYSE_KKO) || 0;
+    } else if (demande.ID_PRODUIT === 'KFE') {
+      prixUnitaire = parseFloat(parametres[0]?.PRIX_ANALYSE_KFE) || 0;
+    }
+
+    const poidsDemande = parseFloat(demande.POIDS_DEMANDE) || 0;
+    const montantCalcule = (poidsDemande / 1000) * prixUnitaire; // Convertir kg en tonnes
+
+    // Mettre à jour LAST_ID_FACTURE dans parametres
+    await new Promise((resolve, reject) => {
+      pool.query(
+        "UPDATE parametres SET LAST_ID_FACTURE = LAST_ID_FACTURE + 1",
+        (err) => {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
+    });
+
+    // Insérer la facture
+    const insertResult = await new Promise((resolve, reject) => {
+      pool.query(`
+        INSERT INTO factures (
+          REF_FACUTRES, CAMPAGNE_FACTURES, DATE_FACTURES, DATEDEPOT_FACTURES,
+          DATEREGLEMENT_FACTUTRES, MONTANT_FACTURES, ID_DEMANDES, NBRE_LOTS_FACTURES,
+          EN_LIGNE_FACTURES, VALIDER, CODE_POSTE_CONTROLE, ID_RECAP
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        REF_FACUTRES,
+        CAMPAGNE_FACTURES || demande.CAMP_DEMANDE,
+        DATE_FACTURES || new Date().toISOString().split('T')[0],
+        DATEDEPOT_FACTURES || null,
+        DATEREGLEMENT_FACTUTRES || null,
+        MONTANT_FACTURES || montantCalcule,
+        ID_DEMANDES,
+        NBRE_LOTS_FACTURES || demande.NBRELOT_DEMANDE,
+        EN_LIGNE_FACTURES || 'Pas en Ligne',
+        VALIDER || 'Non Validée',
+        CODE_POSTE_CONTROLE || null,
+        ID_RECAP || null
+      ], (err, result) => {
+        if (err) reject(err);
+        else resolve(result);
+      });
+    });
+
+    // Mettre à jour la demande pour indiquer qu'elle est facturée
+    await new Promise((resolve, reject) => {
+      pool.query(
+        "UPDATE demandes SET FACTURE_DEMANDE = 1 WHERE ID_DEMANDE = ?",
+        [ID_DEMANDES],
+        (err) => {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
+    });
+
+    res.json({
+      success: true,
+      message: "Facture créée avec succès",
+      idFacture: insertResult.insertId,
+      montantCalcule: montantCalcule
+    });
+
+  } catch (error) {
+    console.error("Erreur création facture:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Route pour valider une facture
+app.put('/api/factures/:id/valider', async (req, res) => {
+  const { id } = req.params;
+  const { valider } = req.body;
+
+  try {
+    await new Promise((resolve, reject) => {
+      pool.query(
+        "UPDATE factures SET VALIDER = ? WHERE ID_FACTURES = ?",
+        [valider ? 'Validée' : 'Non Validée', id],
+        (err) => {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
+    });
+
+    res.json({
+      success: true,
+      message: `Facture ${valider ? 'validée' : 'invalidée'} avec succès`
+    });
+
+  } catch (error) {
+    console.error("Erreur validation facture:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Route pour récupérer les factures
+app.get('/api/factures', (req, res) => {
+  const {
+    refFacture, exportateur, campagne, etat,
+    dateDebut, dateFin, ville, limit, page
+  } = req.query;
+
+  let sql = `
+    SELECT 
+      f.*,
+      d.REF_DEMANDE,
+      d.AUT_DEMANDE,
+      d.CAMP_DEMANDE,
+      d.VILLE_DEMANDE,
+      d.DATEEMI_DEMANDE,
+      d.DATEREC_DEMANDE,
+      d.DATE_EXPIR_DEMANDE,
+      p.LIBELLE_PRODUIT,
+      e.RAISONSOCIALE_EXPORTATEUR,
+      e.MARQUE_EXPORTATEUR
+    FROM factures f
+    LEFT JOIN demandes d ON f.ID_DEMANDES = d.ID_DEMANDE
+    LEFT JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
+    LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
+    WHERE 1=1
+  `;
+
+  const params = [];
+
+  // Filtres
+  if (refFacture) {
+    sql += " AND f.REF_FACUTRES LIKE ?";
+    params.push(`%${refFacture}%`);
+  }
+
+  if (exportateur) {
+    sql += " AND e.RAISONSOCIALE_EXPORTATEUR LIKE ?";
+    params.push(`%${exportateur}%`);
+  }
+
+  if (campagne && campagne !== 'all') {
+    sql += " AND d.CAMP_DEMANDE = ?";
+    params.push(campagne);
+  }
+
+  if (etat && etat !== 'all') {
+    sql += " AND f.VALIDER = ?";
+    params.push(etat);
+  }
+
+  if (ville && ville !== 'all') {
+    sql += " AND d.VILLE_DEMANDE = ?";
+    params.push(ville);
+  }
+
+  if (dateDebut) {
+    sql += " AND DATE(f.DATE_FACTURES) >= ?";
+    params.push(dateDebut);
+  }
+
+  if (dateFin) {
+    sql += " AND DATE(f.DATE_FACTURES) <= ?";
+    params.push(dateFin);
+  }
+
+  sql += " ORDER BY f.DATE_FACTURES DESC";
+
+  // Pagination
+  const itemsPerPage = parseInt(limit) || 50;
+  const currentPage = parseInt(page) || 1;
+  const offset = (currentPage - 1) * itemsPerPage;
+
+  // Compter le total
+  const countSql = sql.replace('SELECT f.*, d.REF_DEMANDE, d.AUT_DEMANDE, d.CAMP_DEMANDE, d.VILLE_DEMANDE, d.DATEEMI_DEMANDE, d.DATEREC_DEMANDE, d.DATE_EXPIR_DEMANDE, p.LIBELLE_PRODUIT, e.RAISONSOCIALE_EXPORTATEUR, e.MARQUE_EXPORTATEUR', 'SELECT COUNT(*) as total');
+
+  pool.query(countSql, params, (countErr, countResults) => {
+    if (countErr) {
+      console.error("Erreur comptage factures:", countErr);
+      return res.status(500).json({ error: countErr.message });
+    }
+
+    const totalItems = countResults[0].total;
+    const totalPages = Math.ceil(totalItems / itemsPerPage);
+
+    // Ajouter la pagination
+    sql += " LIMIT ? OFFSET ?";
+    params.push(itemsPerPage, offset);
+
+    pool.query(sql, params, (err, results) => {
+      if (err) {
+        console.error("Erreur récupération factures:", err);
+        return res.status(500).json({ error: err.message });
+      }
+
+      res.json({
+        data: results,
+        pagination: {
+          currentPage,
+          itemsPerPage,
+          totalItems,
+          totalPages,
+          hasNextPage: currentPage < totalPages,
+          hasPrevPage: currentPage > 1
+        }
+      });
+    });
+  });
+});
+
+// Route pour exporter les factures au format TXT
+app.get('/api/factures/export-txt', (req, res) => {
+  const { facturesIds } = req.query;
+
+  if (!facturesIds) {
+    return res.status(400).json({ error: "Liste des factures requise" });
+  }
+
+  const idsArray = facturesIds.split(',').map(id => parseInt(id)).filter(id => !isNaN(id));
+
+  if (idsArray.length === 0) {
+    return res.status(400).json({ error: "IDs de factures invalides" });
+  }
+
+  pool.query(`
+    SELECT 
+      f.REF_FACUTRES as numero_facture,
+      d.AUT_DEMANDE as autorisation,
+      d.CAMP_DEMANDE as campagne,
+      d.DATEEMI_DEMANDE as date_autorisation_emission,
+      d.DATEREC_DEMANDE as date_autorisation_reception,
+      d.REF_DEMANDE as reference_demande,
+      d.VILLE_DEMANDE as ville,
+      e.RAISONSOCIALE_EXPORTATEUR as exportateur,
+      p.LIBELLE_PRODUIT as produit,
+      f.DATE_FACTURES as date_facture,
+      f.MONTANT_FACTURES as montant,
+      f.VALIDER as statut
+    FROM factures f
+    LEFT JOIN demandes d ON f.ID_DEMANDES = d.ID_DEMANDE
+    LEFT JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
+    LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
+    WHERE f.ID_FACTURES IN (?)
+    ORDER BY f.DATE_FACTURES DESC
+  `, [idsArray], (err, results) => {
+    if (err) {
+      console.error("Erreur export factures:", err);
+      return res.status(500).json({ error: err.message });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({ error: "Aucune facture trouvée" });
+    }
+
+    // Créer le contenu du fichier texte
+    let content = "N° FACTURE\tAUTORISATION\tCAMPAGNE\tDATE EMISSION\tDATE RECEPTION\tREF DEMANDE\tVILLE\tEXPORTATEUR\tPRODUIT\tDATE FACTURE\tMONTANT\tSTATUT\n";
+
+    results.forEach(facture => {
+      const dateEmission = facture.date_autorisation_emission 
+        ? new Date(facture.date_autorisation_emission).toLocaleDateString('fr-FR')
+        : '';
+      
+      const dateReception = facture.date_autorisation_reception 
+        ? new Date(facture.date_autorisation_reception).toLocaleDateString('fr-FR')
+        : '';
+      
+      const dateFacture = facture.date_facture 
+        ? new Date(facture.date_facture).toLocaleDateString('fr-FR')
+        : '';
+
+      content += `${facture.numero_facture || ''}\t` +
+                 `${facture.autorisation || ''}\t` +
+                 `${facture.campagne || ''}\t` +
+                 `${dateEmission}\t` +
+                 `${dateReception}\t` +
+                 `${facture.reference_demande || ''}\t` +
+                 `${facture.ville || ''}\t` +
+                 `${facture.exportateur || ''}\t` +
+                 `${facture.produit || ''}\t` +
+                 `${dateFacture}\t` +
+                 `${(facture.montant || 0).toFixed(2)}\t` +
+                 `${facture.statut || ''}\n`;
+    });
+
+    // Définir les en-têtes pour le téléchargement
+    const filename = `factures_export_${new Date().toISOString().split('T')[0]}.txt`;
+
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(content);
+  });
+});
+
+// Route pour mettre à jour le montant d'une facture depuis un fichier Excel
+app.post('/api/factures/:id/mettre-a-jour-montant', async (req, res) => {
+  const { id } = req.params;
+  const { nouveauMontant, fichierExcel } = req.body;
+
+  if (!nouveauMontant && !fichierExcel) {
+    return res.status(400).json({ error: "Nouveau montant ou fichier Excel requis" });
+  }
+
+  try {
+    let montantAAjouter = parseFloat(nouveauMontant) || 0;
+
+    // Si un fichier Excel est fourni, extraire le montant
+    if (fichierExcel) {
+      // Ici, vous devriez implémenter la logique pour lire le fichier Excel
+      // Pour l'exemple, nous supposons que le fichier contient un montant
+      // Dans une vraie implémentation, vous utiliseriez une bibliothèque comme 'xlsx'
+      montantAAjouter = parseFloat(fichierExcel.montant) || montantAAjouter;
+    }
+
+    // Mettre à jour le montant de la facture
+    await new Promise((resolve, reject) => {
+      pool.query(
+        "UPDATE factures SET MONTANT_FACTURES = ? WHERE ID_FACTURES = ?",
+        [montantAAjouter, id],
+        (err) => {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
+    });
+
+    res.json({
+      success: true,
+      message: "Montant de la facture mis à jour avec succès",
+      nouveauMontant: montantAAjouter
+    });
+
+  } catch (error) {
+    console.error("Erreur mise à jour montant facture:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// === Toutes les autres routes GET existantes ===
+app.get('/api/exportateurs', (req, res) => {
+  pool.query("SELECT ID_EXPORTATEUR as id, RAISONSOCIALE_EXPORTATEUR as nom, MARQUE_EXPORTATEUR as marque FROM exportateurs ORDER BY nom", (err, results) => {
+    if (err) {
+      console.error("Erreur exportateurs:", err);
+      return res.json([]);
+    }
+    res.json(results || []);
+  });
+});
+
+app.get('/api/produits', (req, res) => {
+  pool.query("SELECT ID_PRODUIT as id, LIBELLE_PRODUIT as nom FROM produits ORDER BY nom", (err, results) => {
+    if (err) {
+      console.error("Erreur produits:", err);
+      return res.json([]);
+    }
+    res.json(results || []);
+  });
+});
+
+app.get('/api/campagnes', (req, res) => {
+  pool.query("SELECT DISTINCT CAMP_DEMANDE as nom FROM demandes ORDER BY CAMP_DEMANDE DESC", (err, results) => {
+    if (err) {
+      console.error("Erreur campagnes:", err);
+      return res.json([]);
+    }
+    res.json(results ? results.map(r => ({ nom: r.nom })) : []);
+  });
+});
+
 const PORT = 5000;
 app.listen(PORT, () => {
   console.log(`Backend démarré sur http://localhost:${PORT}`);
@@ -4200,6 +5232,7 @@ app.listen(PORT, () => {
   console.log('');
   console.log('=== NOUVELLES ROUTES VALIDATION BV ===');
   console.log('- POST /api/analyses/valider-bv (valider analyses dans validation_bv)');
+  console.log('- POST /api/analyses/valider-bv-nouveau (valider BV → analysevaliderbv)');
   console.log('- GET  /api/analyses/validees-bv (récupérer analyses validées)');
   console.log('- PUT  /api/analyses/validees-bv/:id (modifier analyse validée)');
   console.log('- DELETE /api/analyses/validees-bv/:id (rejeter analyse)');
@@ -4210,9 +5243,19 @@ app.listen(PORT, () => {
   console.log('- GET  /api/analyses/cacao (nouveau param: seulementValidees=true)');
   console.log('- POST /api/analyses/valider (mise à jour validation_bv)');
   console.log('- PUT  /api/analyses/:id (mise à jour validation_bv si validée)');
+  console.log('- GET  /api/factures/demandes-validees (nouvelle version avec analysevaliderbv)');
   console.log('');
   console.log('=== Utilitaires ===');
   console.log('- GET  /api/init-database (initialiser tables)');
   console.log('- GET  /api/test-data (données de test)');
+  console.log('- GET  /api/parametres (récupérer paramètres)');
+  console.log('- POST /api/parametres (sauvegarder paramètres)');
+  console.log('- GET  /api/factures/demandes-validees (demandes prêtes pour facturation)');
+  console.log('- GET  /api/factures/generer-numero (générer numéro facture)');
+  console.log('- POST /api/factures (créer une facture)');
+  console.log('- PUT  /api/factures/:id/valider (valider une facture)');
+  console.log('- GET  /api/factures (récupérer factures avec filtres)');
+  console.log('- GET  /api/factures/export-txt (exporter factures en TXT)');
+  console.log('- POST /api/factures/:id/mettre-a-jour-montant (mettre à jour montant)');
   console.log('====================================');
 });
