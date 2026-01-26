@@ -7,6 +7,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+
 // Créer un pool de connexions
 const pool = mysql.createPool({
   host: process.env.DB_HOST || 'localhost',
@@ -2259,7 +2260,7 @@ app.get('/api/analyses/validees-legacy', (req, res) => {
   }
   
   if (dateFin) {
-    sql += " AND DATE(av.DATE_VALIDATION) <= ?";
+    sql += " AND DATE(av.DATE_VALIDation) <= ?";
     params.push(dateFin);
   }
   
@@ -5008,6 +5009,7 @@ app.get('/api/factures', (req, res) => {
   pool.query(countSql, params, (countErr, countResults) => {
     if (countErr) {
       console.error("Erreur comptage factures:", countErr);
+      res.setHeader('Content-Type', 'application/json');
       return res.status(500).json({ error: countErr.message });
     }
 
@@ -5021,11 +5023,13 @@ app.get('/api/factures', (req, res) => {
     pool.query(sql, params, (err, results) => {
       if (err) {
         console.error("Erreur récupération factures:", err);
+        res.setHeader('Content-Type', 'application/json');
         return res.status(500).json({ error: err.message });
       }
 
+      res.setHeader('Content-Type', 'application/json');
       res.json({
-        data: results,
+        data: results || [], // Assurez-vous que results est un tableau
         pagination: {
           currentPage,
           itemsPerPage,
@@ -5166,27 +5170,456 @@ app.post('/api/factures/:id/mettre-a-jour-montant', async (req, res) => {
   }
 });
 
-// === Toutes les autres routes GET existantes ===
-app.get('/api/exportateurs', (req, res) => {
-  pool.query("SELECT ID_EXPORTATEUR as id, RAISONSOCIALE_EXPORTATEUR as nom, MARQUE_EXPORTATEUR as marque FROM exportateurs ORDER BY nom", (err, results) => {
-    if (err) {
-      console.error("Erreur exportateurs:", err);
-      return res.json([]);
+// ===============================================
+// ROUTES POUR LA GESTION DES RÉCAPITULATIFS
+// ===============================================
+
+// Route pour créer un récapitulatif
+app.post('/api/recapitulatifs', async (req, res) => {
+  const {
+    code,
+    dateDebut,
+    dateFin,
+    commentaire,
+    facturesIds
+  } = req.body;
+  
+  if (!code) {
+    res.setHeader('Content-Type', 'application/json');
+    return res.status(400).json({ error: "Le code du récapitulatif est requis" });
+  }
+  
+  if (!facturesIds || !Array.isArray(facturesIds) || facturesIds.length === 0) {
+    res.setHeader('Content-Type', 'application/json');
+    return res.status(400).json({ error: "Au moins une facture doit être sélectionnée" });
+  }
+  
+  try {
+    // Vérifier si le code existe déjà
+    const codeExiste = await new Promise((resolve, reject) => {
+      pool.query(
+        "SELECT ID_RECAP FROM recapitulatif WHERE CODE_REACP = ?",
+        [code],
+        (err, results) => {
+          if (err) reject(err);
+          else resolve(results.length > 0);
+        }
+      );
+    });
+    
+    if (codeExiste) {
+      res.setHeader('Content-Type', 'application/json');
+      return res.status(400).json({ error: "Ce code de récapitulatif existe déjà" });
     }
-    res.json(results || []);
+    
+    // Calculer le montant total des factures
+    let montantTotal = 0;
+    for (const factureId of facturesIds) {
+      const facture = await new Promise((resolve, reject) => {
+        pool.query(
+          "SELECT MONTANT_FACTURES FROM factures WHERE ID_FACTURES = ?",
+          [factureId],
+          (err, results) => {
+            if (err) reject(err);
+            else resolve(results[0]);
+          }
+        );
+      });
+      
+      if (facture) {
+        montantTotal += parseFloat(facture.MONTANT_FACTURES) || 0;
+      }
+    }
+    
+    // Insérer le récapitulatif
+    const result = await new Promise((resolve, reject) => {
+      pool.query(`
+        INSERT INTO recapitulatif (
+          CODE_REACP,
+          DATE_DEBUT_RECAP,
+          DATE_FIN_RECAP,
+          NBRE_FACTURE_RECAP,
+          MONTANT_RECAP,
+          CMT_RECAP
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `, [
+        code,
+        dateDebut || null,
+        dateFin || null,
+        facturesIds.length,
+        montantTotal,
+        commentaire || ''
+      ], (err, results) => {
+        if (err) reject(err);
+        else resolve(results);
+      });
+    });
+    
+    const idRecap = result.insertId;
+    
+    // Mettre à jour les factures avec l'ID du récapitulatif
+    for (const factureId of facturesIds) {
+      await new Promise((resolve, reject) => {
+        pool.query(
+          "UPDATE factures SET ID_RECAP = ? WHERE ID_FACTURES = ?",
+          [idRecap, factureId],
+          (err) => {
+            if (err) reject(err);
+            else resolve();
+          }
+        );
+      });
+    }
+    
+    res.setHeader('Content-Type', 'application/json');
+    res.json({
+      success: true,
+      message: "Récapitulatif créé avec succès",
+      idRecap: idRecap,
+      montantTotal: montantTotal
+    });
+    
+  } catch (error) {
+    console.error("Erreur création récapitulatif:", error);
+    res.setHeader('Content-Type', 'application/json');
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Route pour récupérer tous les récapitulatifs
+app.get('/api/recapitulatifs', (req, res) => {
+  const { search, dateDebut, dateFin, limit, page } = req.query;
+  
+  let sql = `SELECT * FROM recapitulatif WHERE 1=1`;
+  const params = [];
+  
+  if (search) {
+    sql += " AND (CODE_REACP LIKE ? OR CMT_RECAP LIKE ?)";
+    params.push(`%${search}%`, `%${search}%`);
+  }
+  
+  if (dateDebut) {
+    sql += " AND DATE(DATE_DEBUT_RECAP) >= ?";
+    params.push(dateDebut);
+  }
+  
+  if (dateFin) {
+    sql += " AND DATE(DATE_FIN_RECAP) <= ?";
+    params.push(dateFin);
+  }
+  
+  sql += " ORDER BY DATE_DEBUT_RECAP DESC";
+  
+  // Pagination
+  const itemsPerPage = parseInt(limit) || 50;
+  const currentPage = parseInt(page) || 1;
+  const offset = (currentPage - 1) * itemsPerPage;
+  
+  // Compter le total
+  let countSql = `SELECT COUNT(*) as total FROM recapitulatif WHERE 1=1`;
+  if (search) {
+    countSql += " AND (CODE_REACP LIKE ? OR CMT_RECAP LIKE ?)";
+  }
+  if (dateDebut) {
+    countSql += " AND DATE(DATE_DEBUT_RECAP) >= ?";
+  }
+  if (dateFin) {
+    countSql += " AND DATE(DATE_FIN_RECAP) <= ?";
+  }
+  
+  pool.query(countSql, params, (countErr, countResults) => {
+    if (countErr) {
+      console.error("Erreur comptage récapitulatifs:", countErr);
+      res.setHeader('Content-Type', 'application/json');
+      return res.status(500).json({ error: countErr.message });
+    }
+    
+    const totalItems = countResults[0].total;
+    const totalPages = Math.ceil(totalItems / itemsPerPage);
+    
+    // Ajouter la pagination
+    sql += " LIMIT ? OFFSET ?";
+    params.push(itemsPerPage, offset);
+    
+    pool.query(sql, params, (err, results) => {
+      if (err) {
+        console.error("Erreur récupération récapitulatifs:", err);
+        res.setHeader('Content-Type', 'application/json');
+        return res.status(500).json({ error: err.message });
+      }
+      
+      // CORRECTION : Toujours retourner du JSON avec la structure attendue
+      res.setHeader('Content-Type', 'application/json');
+      res.json({
+        data: results || [],
+        pagination: {
+          currentPage,
+          itemsPerPage,
+          totalItems,
+          totalPages,
+          hasNextPage: currentPage < totalPages,
+          hasPrevPage: currentPage > 1
+        }
+      });
+    });
+  });
+});
+// Route pour récupérer un récapitulatif spécifique
+app.get('/api/recapitulatifs/:id', (req, res) => {
+  const { id } = req.params;
+  
+  pool.query(`
+    SELECT 
+      r.*,
+      COUNT(f.ID_FACTURES) as nombre_factures_actuel,
+      COALESCE(SUM(f.MONTANT_FACTURES), 0) as montant_actuel
+    FROM recapitulatif r
+    LEFT JOIN factures f ON r.ID_RECAP = f.ID_RECAP
+    WHERE r.ID_RECAP = ?
+    GROUP BY r.ID_RECAP
+  `, [id], (err, results) => {
+    if (err) {
+      console.error("Erreur récupération récapitulatif:", err);
+      res.setHeader('Content-Type', 'application/json');
+      return res.status(500).json({ error: err.message });
+    }
+    
+    if (results.length === 0) {
+      res.setHeader('Content-Type', 'application/json');
+      return res.status(404).json({ error: "Récapitulatif non trouvé" });
+    }
+    
+    const recap = results[0];
+    recap.MONTANT_RECAP = recap.montant_actuel > 0 ? recap.montant_actuel : recap.MONTANT_RECAP;
+    recap.NBRE_FACTURE_RECAP = recap.nombre_factures_actuel > 0 ? recap.nombre_factures_actuel : recap.NBRE_FACTURE_RECAP;
+    
+    res.setHeader('Content-Type', 'application/json');
+    res.json(recap);
   });
 });
 
-app.get('/api/produits', (req, res) => {
-  pool.query("SELECT ID_PRODUIT as id, LIBELLE_PRODUIT as nom FROM produits ORDER BY nom", (err, results) => {
-    if (err) {
-      console.error("Erreur produits:", err);
-      return res.json([]);
+// Route pour modifier un récapitulatif
+app.put('/api/recapitulatifs/:id', async (req, res) => {
+  const { id } = req.params;
+  const {
+    code,
+    dateDebut,
+    dateFin,
+    commentaire,
+    facturesIds
+  } = req.body;
+  
+  try {
+    // Vérifier si le récapitulatif existe
+    const recapExiste = await new Promise((resolve, reject) => {
+      pool.query(
+        "SELECT ID_RECAP FROM recapitulatif WHERE ID_RECAP = ?",
+        [id],
+        (err, results) => {
+          if (err) reject(err);
+          else resolve(results.length > 0);
+        }
+      );
+    });
+    
+    if (!recapExiste) {
+      res.setHeader('Content-Type', 'application/json');
+      return res.status(404).json({ error: "Récapitulatif non trouvé" });
     }
-    res.json(results || []);
-  });
+    
+    // Vérifier si le nouveau code existe déjà (sauf pour le récap courant)
+    if (code) {
+      const codeExisteAutre = await new Promise((resolve, reject) => {
+        pool.query(
+          "SELECT ID_RECAP FROM recapitulatif WHERE CODE_REACP = ? AND ID_RECAP != ?",
+          [code, id],
+          (err, results) => {
+            if (err) reject(err);
+            else resolve(results.length > 0);
+          }
+        );
+      });
+      
+      if (codeExisteAutre) {
+        res.setHeader('Content-Type', 'application/json');
+        return res.status(400).json({ error: "Ce code de récapitulatif existe déjà pour un autre récapitulatif" });
+      }
+    }
+    
+    // Calculer le nouveau montant total si des factures sont fournies
+    let nouveauMontantTotal = 0;
+    if (facturesIds && facturesIds.length > 0) {
+      for (const factureId of facturesIds) {
+        const facture = await new Promise((resolve, reject) => {
+          pool.query(
+            "SELECT MONTANT_FACTURES FROM factures WHERE ID_FACTURES = ?",
+            [factureId],
+            (err, results) => {
+              if (err) reject(err);
+              else resolve(results[0]);
+            }
+          );
+        });
+        
+        if (facture) {
+          nouveauMontantTotal += parseFloat(facture.MONTANT_FACTURES) || 0;
+        }
+      }
+    }
+    
+    // Mettre à jour le récapitulatif
+    await new Promise((resolve, reject) => {
+      let updateSql = "UPDATE recapitulatif SET ";
+      const updateValues = [];
+      const updateFields = [];
+      
+      if (code) {
+        updateFields.push("CODE_REACP = ?");
+        updateValues.push(code);
+      }
+      
+      if (dateDebut) {
+        updateFields.push("DATE_DEBUT_RECAP = ?");
+        updateValues.push(dateDebut);
+      }
+      
+      if (dateFin) {
+        updateFields.push("DATE_FIN_RECAP = ?");
+        updateValues.push(dateFin);
+      }
+      
+      if (commentaire !== undefined) {
+        updateFields.push("CMT_RECAP = ?");
+        updateValues.push(commentaire || '');
+      }
+      
+      if (facturesIds && facturesIds.length > 0) {
+        updateFields.push("NBRE_FACTURE_RECAP = ?");
+        updateValues.push(facturesIds.length);
+        updateFields.push("MONTANT_RECAP = ?");
+        updateValues.push(nouveauMontantTotal);
+      }
+      
+      if (updateFields.length === 0) {
+        res.setHeader('Content-Type', 'application/json');
+        return res.status(400).json({ error: "Aucune donnée à mettre à jour" });
+      }
+      
+      updateSql += updateFields.join(", ") + " WHERE ID_RECAP = ?";
+      updateValues.push(id);
+      
+      pool.query(updateSql, updateValues, (err, result) => {
+        if (err) reject(err);
+        else resolve(result);
+      });
+    });
+    
+    // Si de nouvelles factures sont fournies, mettre à jour leurs ID_RECAP
+    if (facturesIds && facturesIds.length > 0) {
+      // D'abord, retirer l'ID_RECAP de toutes les factures actuelles de ce récapitulatif
+      await new Promise((resolve, reject) => {
+        pool.query(
+          "UPDATE factures SET ID_RECAP = NULL WHERE ID_RECAP = ?",
+          [id],
+          (err) => {
+            if (err) reject(err);
+            else resolve();
+          }
+        );
+      });
+      
+      // Puis, ajouter l'ID_RECAP aux nouvelles factures
+      for (const factureId of facturesIds) {
+        await new Promise((resolve, reject) => {
+          pool.query(
+            "UPDATE factures SET ID_RECAP = ? WHERE ID_FACTURES = ?",
+            [id, factureId],
+            (err) => {
+              if (err) reject(err);
+              else resolve();
+            }
+          );
+        });
+      }
+    }
+    
+    res.setHeader('Content-Type', 'application/json');
+    res.json({
+      success: true,
+      message: "Récapitulatif modifié avec succès",
+      idRecap: id,
+      montantTotal: nouveauMontantTotal || undefined
+    });
+    
+  } catch (error) {
+    console.error("Erreur modification récapitulatif:", error);
+    res.setHeader('Content-Type', 'application/json');
+    res.status(500).json({ error: error.message });
+  }
 });
 
+// Route pour supprimer un récapitulatif
+app.delete('/api/recapitulatifs/:id', async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    // Vérifier si le récapitulatif existe
+    const recapExiste = await new Promise((resolve, reject) => {
+      pool.query(
+        "SELECT ID_RECAP FROM recapitulatif WHERE ID_RECAP = ?",
+        [id],
+        (err, results) => {
+          if (err) reject(err);
+          else resolve(results.length > 0);
+        }
+      );
+    });
+    
+    if (!recapExiste) {
+      res.setHeader('Content-Type', 'application/json');
+      return res.status(404).json({ error: "Récapitulatif non trouvé" });
+    }
+    
+    // Retirer l'ID_RECAP de toutes les factures associées
+    await new Promise((resolve, reject) => {
+      pool.query(
+        "UPDATE factures SET ID_RECAP = NULL WHERE ID_RECAP = ?",
+        [id],
+        (err) => {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
+    });
+    
+    // Supprimer le récapitulatif
+    await new Promise((resolve, reject) => {
+      pool.query(
+        "DELETE FROM recapitulatif WHERE ID_RECAP = ?",
+        [id],
+        (err) => {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
+    });
+    
+    res.setHeader('Content-Type', 'application/json');
+    res.json({
+      success: true,
+      message: "Récapitulatif supprimé avec succès"
+    });
+    
+  } catch (error) {
+    console.error("Erreur suppression récapitulatif:", error);
+    res.setHeader('Content-Type', 'application/json');
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== TOUTES LES AUTRES ROUTES EXISTANTES =====
+
+// Route pour récupérer les campagnes (déjà définie plus haut, mais je la laisse pour complétude)
 app.get('/api/campagnes', (req, res) => {
   pool.query("SELECT DISTINCT CAMP_DEMANDE as nom FROM demandes ORDER BY CAMP_DEMANDE DESC", (err, results) => {
     if (err) {
@@ -5197,12 +5630,23 @@ app.get('/api/campagnes', (req, res) => {
   });
 });
 
-const PORT = 5000;
+// ===============================================
+// DÉMARRAGE DU SERVEUR (DOIT ÊTRE À LA FIN)
+// ===============================================
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`Backend démarré sur http://localhost:${PORT}`);
-  console.log('=== ROUTES DISPONIBLES ===');
-  console.log('');
-  console.log('=== Gestion des données ===');
+  console.log(`Serveur démarré sur le port ${PORT}`);
+  console.log(`URL: http://localhost:${PORT}`);
+  console.log('Routes disponibles:');
+  console.log('- GET  /api/recapitulatifs');
+  console.log('- GET  /api/recapitulatifs/:id');
+  console.log('- POST /api/recapitulatifs');
+  console.log('- PUT  /api/recapitulatifs/:id');
+  console.log('- DELETE /api/recapitulatifs/:id');
+  console.log('- GET  /api/factures');
+  console.log('- GET  /api/factures/demandes-validees');
+  console.log('- POST /api/factures');
+   console.log('=== Gestion des données ===');
   console.log('- GET  /api/exportateurs, /api/produits, /api/campagnes, /api/magasins');
   console.log('- GET  /api/demandes (avec filtres)');
   console.log('- GET  /api/sondage/lots (lots sondés)');
