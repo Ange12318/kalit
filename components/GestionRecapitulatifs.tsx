@@ -44,12 +44,10 @@ const GestionRecapitulatifs: React.FC<GestionRecapitulatifsProps> = ({ onNavigat
       const response = await fetch('/api/recapitulatifs');
       
       if (!response.ok) {
-        // Essayer de récupérer le message d'erreur JSON
         try {
           const errorData = await response.json();
           throw new Error(errorData.error || `Erreur ${response.status}`);
         } catch (parseErr) {
-          // Si ce n'est pas du JSON, retourner une erreur générique
           throw new Error(`Erreur serveur ${response.status}: ${response.statusText}`);
         }
       }
@@ -67,34 +65,30 @@ const GestionRecapitulatifs: React.FC<GestionRecapitulatifsProps> = ({ onNavigat
   };
 
   // Charger les factures disponibles
-const loadFactures = async () => {
-  try {
-    const response = await fetch('/api/factures?limit=1000');
+  const loadFactures = async () => {
+    try {
+      const response = await fetch('/api/factures?limit=1000');
 
-    if (!response.ok) {
-      // Essayer de récupérer le message d'erreur JSON
-      try {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `Erreur ${response.status}`);
-      } catch (parseErr) {
-        // Si ce n'est pas du JSON, retourner une erreur générique
-        throw new Error(`Erreur serveur ${response.status}: ${response.statusText}`);
+      if (!response.ok) {
+        try {
+          const errorData = await response.json();
+          throw new Error(errorData.error || `Erreur ${response.status}`);
+        } catch (parseErr) {
+          throw new Error(`Erreur serveur ${response.status}: ${response.statusText}`);
+        }
       }
-    }
 
-    const data = await response.json();
-    // CORRECTION : Gérer le cas où data est un tableau ou un objet avec data
-    if (Array.isArray(data)) {
-      setFactures(data);
-    } else {
-      setFactures(data.data || []);
+      const data = await response.json();
+      if (Array.isArray(data)) {
+        setFactures(data);
+      } else {
+        setFactures(data.data || []);
+      }
+    } catch (err) {
+      console.error('Erreur loadFactures:', err);
+      setFactures([]);
     }
-  } catch (err) {
-    console.error('Erreur loadFactures:', err);
-    // Ne pas afficher l'erreur si c'est juste qu'il n'y a pas de factures
-    setFactures([]);
-  }
-};
+  };
 
   useEffect(() => {
     loadRecaps();
@@ -126,31 +120,72 @@ const loadFactures = async () => {
   };
 
   // Gérer l'ouverture de la modale d'édition
-  const handleOpenEditModal = (recap) => {
-    setSelectedRecap(recap);
-    setRecapData({
-      code: recap.CODE_REACP || '',
-      dateDebut: recap.DATE_DEBUT_RECAP ? recap.DATE_DEBUT_RECAP.split('T')[0] : '',
-      dateFin: recap.DATE_FIN_RECAP ? recap.DATE_FIN_RECAP.split('T')[0] : '',
-      commentaire: recap.CMT_RECAP || ''
-    });
-    
-    // Charger les factures de ce récapitulatif
-    fetchRecapFactures(recap.ID_RECAP);
-    
-    setShowEditModal(true);
-    setError('');
+  const handleOpenEditModal = async (recap) => {
+    setIsLoading(true);
+    try {
+      setSelectedRecap(recap);
+      setRecapData({
+        code: recap.CODE_REACP || '',
+        dateDebut: recap.DATE_DEBUT_RECAP ? recap.DATE_DEBUT_RECAP.split('T')[0] : '',
+        dateFin: recap.DATE_FIN_RECAP ? recap.DATE_FIN_RECAP.split('T')[0] : '',
+        commentaire: recap.CMT_RECAP || ''
+      });
+      
+      // Charger les factures de ce récapitulatif
+      await fetchRecapFactures(recap.ID_RECAP);
+      
+      setShowEditModal(true);
+      setError('');
+    } catch (err) {
+      setError('Erreur lors du chargement des factures du récapitulatif');
+      console.error('Erreur handleOpenEditModal:', err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   // Charger les factures d'un récapitulatif
   const fetchRecapFactures = async (idRecap) => {
     try {
       const response = await fetch(`/api/recapitulatifs/${idRecap}/factures`);
-      if (!response.ok) throw new Error('Erreur lors du chargement des factures');
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `Erreur ${response.status}`);
+      }
       const data = await response.json();
-      setSelectedFactures(data.map(f => f.ID_FACTURES));
+      
+      // Extraire les IDs des factures du récapitulatif
+      const factureIds = data.map(f => f.ID_FACTURES);
+      setSelectedFactures(factureIds);
+      
+      console.log('Factures chargées pour le récap:', factureIds.length, 'factures');
     } catch (err) {
-      setError(err.message);
+      console.error('Erreur fetchRecapFactures:', err);
+      setSelectedFactures([]);
+      // Si la route n'existe pas, essayer de charger toutes les factures
+      // et filtrer celles qui ont ce récapitulatif
+      await loadAllFacturesForRecap(idRecap);
+    }
+  };
+
+  // Méthode de secours pour charger les factures d'un récapitulatif
+  const loadAllFacturesForRecap = async (idRecap) => {
+    try {
+      const response = await fetch('/api/factures?limit=1000');
+      if (!response.ok) throw new Error('Erreur chargement factures');
+      
+      const data = await response.json();
+      const facturesData = Array.isArray(data) ? data : data.data || [];
+      
+      // Filtrer les factures qui appartiennent à ce récapitulatif
+      const recapFactures = facturesData.filter(f => f.ID_RECAP == idRecap);
+      const factureIds = recapFactures.map(f => f.ID_FACTURES);
+      setSelectedFactures(factureIds);
+      
+      console.log('Factures filtrées pour le récap:', factureIds.length, 'factures');
+    } catch (err) {
+      console.error('Erreur loadAllFacturesForRecap:', err);
+      setSelectedFactures([]);
     }
   };
 
@@ -263,51 +298,21 @@ const loadFactures = async () => {
     }
   };
 
-  // Supprimer une facture d'un récapitulatif
-  const handleRemoveFactureFromRecap = async (factureId) => {
-    if (!selectedRecap) return;
+  // Retirer une facture du récapitulatif (en mode édition)
+  const handleRemoveFactureFromRecap = (factureId) => {
+    setSelectedFactures(prev => prev.filter(id => id !== factureId));
+    setSuccessMessage(`Facture retirée du récapitulatif (les modifications seront enregistrées quand vous cliquerez sur "Enregistrer")`);
+  };
 
-    try {
-      const response = await fetch(`/api/recapitulatifs/${selectedRecap.ID_RECAP}/factures/${factureId}`, {
-        method: 'DELETE',
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Erreur lors de la suppression');
-      }
-
-      // Mettre à jour la liste des factures sélectionnées
-      setSelectedFactures(prev => prev.filter(id => id !== factureId));
-      
-      // Recharger les données du récapitulatif
-      loadRecaps();
-    } catch (err) {
-      setError(err.message);
+  // Ajouter une facture au récapitulatif (en mode édition)
+  const handleAddFactureToRecap = (factureId) => {
+    if (!selectedFactures.includes(factureId)) {
+      setSelectedFactures(prev => [...prev, factureId]);
+      setSuccessMessage(`Facture ajoutée au récapitulatif (les modifications seront enregistrées quand vous cliquerez sur "Enregistrer")`);
     }
   };
 
-  // Exporter un récapitulatif
-  const handleExportRecap = async (recap) => {
-    try {
-      const response = await fetch(`/api/recapitulatifs/${recap.ID_RECAP}/export`);
-      if (!response.ok) throw new Error('Erreur lors de l\'export');
-      
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${recap.CODE_REACP}.txt`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  // Gérer la sélection/désélection des factures
+  // Gérer la sélection/désélection des factures (pour création)
   const toggleFactureSelection = (factureId) => {
     setSelectedFactures(prev => {
       if (prev.includes(factureId)) {
@@ -332,11 +337,19 @@ const loadFactures = async () => {
     }, 0);
   };
 
-  // Obtenir les factures d'un récapitulatif
-  const getRecapFactures = (recapId) => {
-    // Dans une implémentation réelle, vous feriez un appel API
-    // Pour l'exemple, nous filtrons les factures
-    return factures.filter(f => f.ID_RECAP === recapId);
+  // Obtenir les factures disponibles pour ajout (non déjà dans le récap)
+  const getAvailableFacturesForEdit = () => {
+    return factures.filter(f => !selectedFactures.includes(f.ID_FACTURES));
+  };
+
+  // Obtenir les factures actuellement dans le récap
+  const getCurrentRecapFactures = () => {
+    return factures.filter(f => selectedFactures.includes(f.ID_FACTURES));
+  };
+
+  // Obtenir les factures disponibles pour création (sans récapitulatif)
+  const getAvailableFacturesForCreate = () => {
+    return factures.filter(f => !f.ID_RECAP);
   };
 
   return (
@@ -448,13 +461,6 @@ const loadFactures = async () => {
                             < EditIconAlt className="h-5 w-5" />
                           </button>
                           <button
-                            onClick={() => handleExportRecap(recap)}
-                            className="text-green-600 hover:text-green-800 p-1"
-                            title="Exporter"
-                          >
-                            <PrintIcon className="h-5 w-5" />
-                          </button>
-                          <button
                             onClick={() => handleDeleteRecap(recap.ID_RECAP)}
                             className="text-red-600 hover:text-red-800 p-1"
                             title="Supprimer"
@@ -550,10 +556,7 @@ const loadFactures = async () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {factures
-                                .filter(f => !f.ID_RECAP) // AJOUTER CETTE LIGNE - Filtrer les factures sans récap
-
-                      .map((facture) => (
+                      {getAvailableFacturesForCreate().map((facture) => (
                         <tr key={facture.ID_FACTURES} className="border-t hover:bg-gray-50">
                           <td className="p-3">
                             <input
@@ -673,34 +676,28 @@ const loadFactures = async () => {
                 </div>
               </div>
 
-              {/* Liste des factures du récapitulatif */}
+              {/* Section 1: Factures actuellement dans le récapitulatif */}
               <div className="mt-6">
-                <h4 className="text-lg font-semibold mb-4">Factures du récapitulatif</h4>
-                <div className="border rounded-lg max-h-60 overflow-y-auto">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-gray-50 sticky top-0">
-                      <tr>
-                        <th className="p-3 text-left">Sélection</th>
-                        <th className="p-3 text-left">N° Facture</th>
-                        <th className="p-3 text-left">Exportateur</th>
-                        <th className="p-3 text-left">Montant</th>
-                        <th className="p-3 text-left">Date</th>
-                        <th className="p-3 text-left">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {factures
-                        .filter(f => selectedFactures.includes(f.ID_FACTURES))
-                        .map((facture) => (
+                <h4 className="text-lg font-semibold mb-4">Factures dans le récapitulatif ({getCurrentRecapFactures().length})</h4>
+                {getCurrentRecapFactures().length === 0 ? (
+                  <div className="text-center py-8 border rounded-lg bg-gray-50">
+                    <p className="text-gray-500">Aucune facture dans ce récapitulatif</p>
+                  </div>
+                ) : (
+                  <div className="border rounded-lg max-h-60 overflow-y-auto">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-gray-50 sticky top-0">
+                        <tr>
+                          <th className="p-3 text-left">N° Facture</th>
+                          <th className="p-3 text-left">Exportateur</th>
+                          <th className="p-3 text-left">Montant</th>
+                          <th className="p-3 text-left">Date</th>
+                          <th className="p-3 text-left">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {getCurrentRecapFactures().map((facture) => (
                           <tr key={facture.ID_FACTURES} className="border-t hover:bg-gray-50">
-                            <td className="p-3">
-                              <input
-                                type="checkbox"
-                                checked={selectedFactures.includes(facture.ID_FACTURES)}
-                                onChange={() => toggleFactureSelection(facture.ID_FACTURES)}
-                                className="h-4 w-4 text-blue-600"
-                              />
-                            </td>
                             <td className="p-3 font-medium">{facture.REF_FACUTRES}</td>
                             <td className="p-3">{facture.RAISONSOCIALE_EXPORTATEUR}</td>
                             <td className="p-3 font-semibold">
@@ -720,12 +717,62 @@ const loadFactures = async () => {
                             </td>
                           </tr>
                         ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Section 2: Factures disponibles pour ajout */}
+              <div className="mt-6">
+                <h4 className="text-lg font-semibold mb-4">Ajouter des factures au récapitulatif</h4>
+                <div className="border rounded-lg max-h-60 overflow-y-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-gray-50 sticky top-0">
+                      <tr>
+                        <th className="p-3 text-left">N° Facture</th>
+                        <th className="p-3 text-left">Exportateur</th>
+                        <th className="p-3 text-left">Montant</th>
+                        <th className="p-3 text-left">Date</th>
+                        <th className="p-3 text-left">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {getAvailableFacturesForEdit().length === 0 ? (
+                        <tr>
+                          <td colSpan="5" className="text-center p-6 text-gray-500">
+                            Aucune facture disponible à ajouter
+                          </td>
+                        </tr>
+                      ) : (
+                        getAvailableFacturesForEdit().map((facture) => (
+                          <tr key={facture.ID_FACTURES} className="border-t hover:bg-gray-50">
+                            <td className="p-3 font-medium">{facture.REF_FACUTRES}</td>
+                            <td className="p-3">{facture.RAISONSOCIALE_EXPORTATEUR}</td>
+                            <td className="p-3 font-semibold">
+                              {(facture.MONTANT_FACTURES || 0).toLocaleString('fr-FR')} FCFA
+                            </td>
+                            <td className="p-3">
+                              {facture.DATE_FACTURES ? new Date(facture.DATE_FACTURES).toLocaleDateString('fr-FR') : '-'}
+                            </td>
+                            <td className="p-3">
+                              <button
+                                onClick={() => handleAddFactureToRecap(facture.ID_FACTURES)}
+                                className="text-green-600 hover:text-green-800 p-1"
+                                title="Ajouter au récapitulatif"
+                              >
+                                <SaveIcon className="h-5 w-5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>
                 <div className="mt-4 flex justify-between items-center">
                   <span className="text-sm text-gray-600">
-                    {selectedFactures.length} facture(s) dans le récapitulatif
+                    {getCurrentRecapFactures().length} facture(s) dans le récapitulatif
                   </span>
                   <span className="font-bold text-green-700">
                     Total: {calculateSelectedTotal().toLocaleString('fr-FR')} FCFA
@@ -746,7 +793,7 @@ const loadFactures = async () => {
                   disabled={isLoading}
                   className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
-                  {isLoading ? 'Modification...' : 'Modifier'}
+                  {isLoading ? 'Modification...' : 'Enregistrer les modifications'}
                   <SaveIcon className="h-5 w-5" />
                 </button>
               </div>

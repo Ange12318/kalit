@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import * as XLSX from 'xlsx'; // Import de la bibliothèque Excel
 import {
   BackArrowIcon,
   DocumentIcon,
@@ -267,28 +268,107 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
     const file = event.target.files?.[0];
     if (!file) return;
 
-    // Ici, vous devriez implémenter la lecture du fichier Excel
-    // Pour l'exemple, nous simulons une extraction de montant
+    setLoading(true);
+    setMessage('');
+
     try {
-      // Dans une vraie implémentation, utiliser une bibliothèque comme 'xlsx'
-      // Pour l'exemple, nous supposons que le montant est dans le nom du fichier
-      const montant = parseFloat(file.name.match(/\d+/)?.[0] || '0');
+      // Lire le fichier Excel
+      const reader = new FileReader();
       
-      const response = await fetch(`http://localhost:5000/api/factures/${factureId}/mettre-a-jour-montant`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nouveauMontant: montant })
-      });
+      reader.onload = async (e) => {
+        try {
+          const data = e.target?.result;
+          const workbook = XLSX.read(data, { type: 'binary' });
+          
+          // Obtenir le nom de la première feuille (normalement "rptFacturesListExportXls")
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheetName];
+          
+          // Convertir la feuille en tableau d'objets JSON
+          const excelData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+          
+          // Rechercher la colonne "Montant facture" (colonne K dans l'exemple donné)
+          // Trouver l'index de la colonne Montant facture
+          const headerRow = excelData[0] as string[];
+          const montantColIndex = headerRow.findIndex(cell => 
+            cell && cell.toString().toLowerCase().includes('montant facture')
+          );
+          
+          if (montantColIndex === -1) {
+            throw new Error('Colonne "Montant facture" non trouvée dans le fichier Excel');
+          }
+          
+          // Prendre la première ligne de données (après l'en-tête)
+          // Rechercher la ligne correspondant à la facture (par numéro de facture ou autre identifiant)
+          let montant = 0;
+          
+          // Option 1: Prendre le montant de la première ligne de données
+          if (excelData.length > 1) {
+            const firstDataRow = excelData[1] as any[];
+            if (firstDataRow && firstDataRow[montantColIndex]) {
+              montant = parseFloat(firstDataRow[montantColIndex]);
+            }
+          }
+          
+          // Option 2: Rechercher par référence de facture si disponible
+          // const refFactureColIndex = headerRow.findIndex(cell => 
+          //   cell && cell.toString().toLowerCase().includes('facture')
+          // );
+          // if (refFactureColIndex !== -1) {
+          //   for (let i = 1; i < excelData.length; i++) {
+          //     const row = excelData[i] as any[];
+          //     if (row && row[refFactureColIndex] === factureRef) {
+          //       montant = parseFloat(row[montantColIndex]);
+          //       break;
+          //     }
+          //   }
+          // }
+          
+          if (montant <= 0) {
+            throw new Error('Montant non trouvé ou invalide dans le fichier Excel');
+          }
+          
+          console.log('Montant extrait du fichier Excel:', montant);
+          
+          // Envoyer le montant au serveur
+          const response = await fetch(`http://localhost:5000/api/factures/${factureId}/mettre-a-jour-montant`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ nouveauMontant: montant })
+          });
 
-      const result = await response.json();
+          const result = await response.json();
 
-      if (result.success) {
-        setMessage(`Montant mis à jour: ${montant} FCFA`);
-        await rechercherFactures();
-      }
+          if (result.success) {
+            setMessage(`Montant mis à jour avec succès: ${montant.toFixed(2)} FCFA`);
+            await rechercherFactures();
+          } else {
+            throw new Error(result.error || 'Erreur lors de la mise à jour du montant');
+          }
+        } catch (error: any) {
+          console.error('Erreur traitement fichier Excel:', error);
+          setMessage(`Erreur: ${error.message}`);
+        } finally {
+          setLoading(false);
+          // Réinitialiser l'input file
+          event.target.value = '';
+        }
+      };
+      
+      reader.onerror = () => {
+        console.error('Erreur lecture fichier');
+        setMessage('Erreur lors de la lecture du fichier Excel');
+        setLoading(false);
+        event.target.value = '';
+      };
+      
+      reader.readAsBinaryString(file);
+      
     } catch (error: any) {
       console.error('Erreur upload fichier:', error);
       setMessage(`Erreur: ${error.message}`);
+      setLoading(false);
+      event.target.value = '';
     }
   };
 
@@ -331,7 +411,7 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
       </div>
 
       {message && (
-        <div className={`p-4 rounded-lg ${message.includes('succès') ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+        <div className={`p-4 rounded-lg ${message.includes('succès') || message.includes('mis à jour') ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
           {message}
         </div>
       )}
@@ -704,7 +784,7 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
                             Valider
                           </button>
                         )}
-                        <label className="bg-blue-600 hover:bg-blue-700 text-white text-xs px-3 py-1 rounded flex items-center gap-1 cursor-pointer">
+                        <label className={`text-xs px-3 py-1 rounded flex items-center gap-1 cursor-pointer ${facture.VALIDER === 'Validée' ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}>
                           <UploadIcon className="h-3 w-3" />
                           Charger Excel
                           <input
@@ -712,6 +792,8 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
                             accept=".xlsx,.xls"
                             className="hidden"
                             onChange={(e) => handleFileUpload(e, facture.ID_FACTURES)}
+                            disabled={facture.VALIDER !== 'Validée'}
+                            title={facture.VALIDER === 'Validée' ? "Charger un fichier Excel pour mettre à jour le montant" : "La facture doit être validée pour charger un fichier Excel"}
                           />
                         </label>
                         <button
