@@ -4629,12 +4629,13 @@ app.post('/api/parametres', (req, res) => {
   });
 });
 
-// === NOUVELLES ROUTES POUR LA GESTION DES FACTURES ===
-
+// ================================================
+// MODIFICATION DE LA ROUTE /api/factures/demandes-validees
+// ================================================
 app.get('/api/factures/demandes-validees', (req, res) => {
   const { 
     refDemande, autorisation, exportateur, campagne,
-    dateDebut, dateFin, produit, ville 
+    dateDebut, dateFin, produit, ville, statutFacture 
   } = req.query;
 
   let sql = `
@@ -4675,7 +4676,13 @@ app.get('/api/factures/demandes-validees', (req, res) => {
       -- Vérifier si une facture existe déjà pour cette demande
       (SELECT COUNT(*) 
        FROM factures f 
-       WHERE f.ID_DEMANDES = d.ID_DEMANDE) as facture_existe
+       WHERE f.ID_DEMANDES = d.ID_DEMANDE) as facture_existe,
+       
+      -- Récupérer le statut de la facture associée
+      (SELECT f.VALIDER 
+       FROM factures f 
+       WHERE f.ID_DEMANDES = d.ID_DEMANDE 
+       LIMIT 1) as STATUT_FACTURE
     FROM demandes d
     LEFT JOIN produits p ON d.ID_PRODUIT = p.ID_PRODUIT
     LEFT JOIN exportateurs e ON d.ID_EXPORTATEUR = e.ID_EXPORTATEUR
@@ -4725,6 +4732,17 @@ app.get('/api/factures/demandes-validees', (req, res) => {
     params.push(dateFin);
   }
 
+  // Filtre par statut de facture
+  if (statutFacture) {
+    if (statutFacture === 'En attente') {
+      sql += " AND (SELECT COUNT(*) FROM factures f WHERE f.ID_DEMANDES = d.ID_DEMANDE) = 0";
+    } else if (statutFacture === 'Validée') {
+      sql += " AND (SELECT f.VALIDER FROM factures f WHERE f.ID_DEMANDES = d.ID_DEMANDE LIMIT 1) = 'Validée'";
+    } else if (statutFacture === 'Rejetée') {
+      sql += " AND (SELECT f.VALIDER FROM factures f WHERE f.ID_DEMANDES = d.ID_DEMANDE LIMIT 1) = 'Rejetée'";
+    }
+  }
+
   sql += " ORDER BY d.DATEEMI_DEMANDE DESC";
 
   pool.query(sql, params, (err, results) => {
@@ -4733,24 +4751,24 @@ app.get('/api/factures/demandes-validees', (req, res) => {
       return res.status(500).json({ error: err.message });
     }
 
-    // Filtrer les demandes où tous les lots sont validés dans validation_bv et pas encore facturées
+    // Filtrer les demandes où tous les lots sont validés dans validation_bv
     const demandesValidees = (results || []).filter(d => 
       d.total_lots > 0 && 
-      d.lots_valides_bv >= d.total_lots && 
-      d.facture_existe === 0 &&
-      d.FACTURE_DEMANDE !== 1
+      d.lots_valides_bv >= d.total_lots
     );
 
     // Pour le débogage, ajouter des informations supplémentaires
     const demandesAvecDetails = demandesValidees.map(demande => ({
       ...demande,
       pourcentage_valides: demande.total_lots > 0 ? 
-        Math.round((demande.lots_valides_bv / demande.total_lots) * 100) : 0
+        Math.round((demande.lots_valides_bv / demande.total_lots) * 100) : 0,
+      STATUT_FACTURE: demande.STATUT_FACTURE || null
     }));
 
     res.json(demandesAvecDetails);
   });
 });
+
 
 // Route pour générer un numéro de facture
 app.get('/api/factures/generer-numero', async (req, res) => {
@@ -4903,16 +4921,39 @@ app.post('/api/factures', async (req, res) => {
   }
 });
 
-// Route pour valider une facture
+// Route pour valider/invalider une facture
 app.put('/api/factures/:id/valider', async (req, res) => {
   const { id } = req.params;
-  const { valider } = req.body;
+  const { statut } = req.body; // Changé de 'valider' à 'statut'
+
+  if (!statut || !['Validée', 'Non Validée', 'Annulée'].includes(statut)) {
+    return res.status(400).json({ 
+      error: "Statut invalide. Doit être 'Validée', 'Non Validée' ou 'Annulée'" 
+    });
+  }
 
   try {
+    // Vérifier si la facture existe
+    const factureExiste = await new Promise((resolve, reject) => {
+      pool.query(
+        "SELECT VALIDER FROM factures WHERE ID_FACTURES = ?",
+        [id],
+        (err, results) => {
+          if (err) reject(err);
+          else resolve(results.length > 0 ? results[0] : null);
+        }
+      );
+    });
+
+    if (!factureExiste) {
+      return res.status(404).json({ error: "Facture non trouvée" });
+    }
+
+    // Mettre à jour le statut
     await new Promise((resolve, reject) => {
       pool.query(
         "UPDATE factures SET VALIDER = ? WHERE ID_FACTURES = ?",
-        [valider ? 'Validée' : 'Non Validée', id],
+        [statut, id],
         (err) => {
           if (err) reject(err);
           else resolve();
@@ -4922,19 +4963,114 @@ app.put('/api/factures/:id/valider', async (req, res) => {
 
     res.json({
       success: true,
-      message: `Facture ${valider ? 'validée' : 'invalidée'} avec succès`
+      message: `Facture marquée comme '${statut}' avec succès`,
+      ancienStatut: factureExiste.VALIDER,
+      nouveauStatut: statut
     });
 
   } catch (error) {
-    console.error("Erreur validation facture:", error);
+    console.error("Erreur changement statut facture:", error);
     res.status(500).json({ error: error.message });
   }
 });
 
+// ================================================
+// ROUTE UNIFIÉE POUR CHANGER LE STATUT DES FACTURES
+// ================================================
+app.put('/api/factures/:id/annuler', async (req, res) => {
+  const { id } = req.params;
+  const { statut, raison } = req.body;
+
+  if (!statut && !raison) {
+    return res.status(400).json({ 
+      error: "Statut ou raison requis" 
+    });
+  }
+
+  try {
+    // Vérifier si la facture existe
+    const facture = await new Promise((resolve, reject) => {
+      pool.query(
+        "SELECT VALIDER, ID_DEMANDES FROM factures WHERE ID_FACTURES = ?",
+        [id],
+        (err, results) => {
+          if (err) reject(err);
+          else resolve(results.length > 0 ? results[0] : null);
+        }
+      );
+    });
+
+    if (!facture) {
+      return res.status(404).json({ error: "Facture non trouvée" });
+    }
+
+    // Déterminer le nouveau statut
+    let nouveauStatut = 'Annulée';
+    if (statut) {
+      nouveauStatut = statut;
+    }
+
+    // Vérifier les transitions autorisées
+    const ancienStatut = facture.VALIDER;
+    const transitionsValides = {
+      'Non Validée': ['Validée', 'Rejetée', 'Annulée'],
+      'Validée': ['Annulée'],
+      'Rejetée': ['Validée', 'Annulée'],
+      'Annulée': ['Validée', 'Non Validée', 'Rejetée']
+    };
+
+    if (transitionsValides[ancienStatut] && !transitionsValides[ancienStatut].includes(nouveauStatut)) {
+      return res.status(400).json({ 
+        error: `Transition non autorisée de '${ancienStatut}' à '${nouveauStatut}'` 
+      });
+    }
+
+    // Mettre à jour le statut de la facture
+    await new Promise((resolve, reject) => {
+      pool.query(
+        "UPDATE factures SET VALIDER = ? WHERE ID_FACTURES = ?",
+        [nouveauStatut, id],
+        (err) => {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
+    });
+
+    // Si la facture est annulée, réinitialiser le statut de la demande
+    if (nouveauStatut === 'Annulée' && facture.ID_DEMANDES) {
+      await new Promise((resolve, reject) => {
+        pool.query(
+          "UPDATE demandes SET FACTURE_DEMANDE = 0 WHERE ID_DEMANDE = ?",
+          [facture.ID_DEMANDES],
+          (err) => {
+            if (err) reject(err);
+            else resolve();
+          }
+        );
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `Facture marquée comme '${nouveauStatut}' avec succès`,
+      ancienStatut: ancienStatut,
+      nouveauStatut: nouveauStatut,
+      raison: raison || `Changement de statut vers '${nouveauStatut}'`
+    });
+
+  } catch (error) {
+    console.error("Erreur changement statut facture:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+
 // Route pour récupérer les factures
 app.get('/api/factures', (req, res) => {
   const {
-    refFacture, exportateur, campagne, etat,
+    refFacture, exportateur, campagne, statut, // Changé de 'etat' à 'statut'
     dateDebut, dateFin, ville, limit, page
   } = req.query;
 
@@ -4976,11 +5112,12 @@ app.get('/api/factures', (req, res) => {
     params.push(campagne);
   }
 
-  if (etat && etat !== 'all') {
+  if (statut && statut !== 'all') {
     sql += " AND f.VALIDER = ?";
-    params.push(etat);
+    params.push(statut);
   }
 
+  // Filtre ville - AJOUTÉ
   if (ville && ville !== 'all') {
     sql += " AND d.VILLE_DEMANDE = ?";
     params.push(ville);
@@ -5029,7 +5166,7 @@ app.get('/api/factures', (req, res) => {
 
       res.setHeader('Content-Type', 'application/json');
       res.json({
-        data: results || [], // Assurez-vous que results est un tableau
+        data: results || [],
         pagination: {
           currentPage,
           itemsPerPage,
@@ -5103,6 +5240,9 @@ app.get('/api/factures/export-txt', (req, res) => {
         ? new Date(facture.date_facture).toLocaleDateString('fr-FR')
         : '';
 
+      // Formater le statut pour l'export
+      let statutExport = facture.statut || '';
+      
       content += `${facture.numero_facture || ''}\t` +
                  `${facture.autorisation || ''}\t` +
                  `${facture.campagne || ''}\t` +
@@ -5114,7 +5254,7 @@ app.get('/api/factures/export-txt', (req, res) => {
                  `${facture.produit || ''}\t` +
                  `${dateFacture}\t` +
                  `${(facture.montant || 0).toFixed(2)}\t` +
-                 `${facture.statut || ''}\n`;
+                 `${statutExport}\n`;
     });
 
     // Définir les en-têtes pour le téléchargement
@@ -5136,13 +5276,35 @@ app.post('/api/factures/:id/mettre-a-jour-montant', async (req, res) => {
   }
 
   try {
+    // Vérifier si la facture existe et son statut
+    const facture = await new Promise((resolve, reject) => {
+      pool.query(
+        "SELECT VALIDER FROM factures WHERE ID_FACTURES = ?",
+        [id],
+        (err, results) => {
+          if (err) reject(err);
+          else resolve(results.length > 0 ? results[0] : null);
+        }
+      );
+    });
+
+    if (!facture) {
+      return res.status(404).json({ error: "Facture non trouvée" });
+    }
+
+    // Vérifier que la facture est validée - AJOUTÉ
+    if (facture.VALIDER !== 'Validée') {
+      return res.status(400).json({ 
+        error: "Seules les factures validées peuvent être mises à jour" 
+      });
+    }
+
     let montantAAjouter = parseFloat(nouveauMontant) || 0;
 
     // Si un fichier Excel est fourni, extraire le montant
     if (fichierExcel) {
       // Ici, vous devriez implémenter la logique pour lire le fichier Excel
       // Pour l'exemple, nous supposons que le fichier contient un montant
-      // Dans une vraie implémentation, vous utiliseriez une bibliothèque comme 'xlsx'
       montantAAjouter = parseFloat(fichierExcel.montant) || montantAAjouter;
     }
 
@@ -5161,6 +5323,7 @@ app.post('/api/factures/:id/mettre-a-jour-montant', async (req, res) => {
     res.json({
       success: true,
       message: "Montant de la facture mis à jour avec succès",
+      ancienStatut: facture.VALIDER,
       nouveauMontant: montantAAjouter
     });
 
@@ -5168,6 +5331,21 @@ app.post('/api/factures/:id/mettre-a-jour-montant', async (req, res) => {
     console.error("Erreur mise à jour montant facture:", error);
     res.status(500).json({ error: error.message });
   }
+});
+
+// ================================================
+// ROUTE POUR LES STATUTS DE FACTURES
+// ================================================
+app.get('/api/factures/statuts', (req, res) => {
+  res.json({
+    statuts: ['Validée', 'Non Validée', 'Rejetée', 'Annulée'],
+    transitions: {
+      'Non Validée': ['Validée', 'Rejetée', 'Annulée'],
+      'Validée': ['Annulée'],
+      'Rejetée': ['Validée', 'Annulée'],
+      'Annulée': ['Validée', 'Non Validée', 'Rejetée']
+    }
+  });
 });
 
 // ===============================================

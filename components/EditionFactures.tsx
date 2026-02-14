@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import * as XLSX from 'xlsx'; // Import de la bibliothèque Excel
+import * as XLSX from 'xlsx';
 import {
   BackArrowIcon,
   DocumentIcon,
@@ -38,6 +38,7 @@ interface Demande {
   facture_existe: number;
   FACTURE_DEMANDE: number;
   pourcentage_valides: number;
+  STATUT_FACTURE?: string; // Nouveau champ pour le statut de la facture associée
 }
 
 interface Facture {
@@ -75,7 +76,8 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
     dateDebut: '',
     dateFin: '',
     produit: '',
-    ville: ''
+    ville: '',
+    statutFacture: '' // Renommé de 'etat' à 'statutFacture' pour plus de clarté
   });
 
   // Filtres pour les factures
@@ -83,7 +85,7 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
     refFacture: '',
     exportateur: '',
     campagne: '',
-    etat: '',
+    statut: '',
     dateDebut: '',
     dateFin: '',
     ville: ''
@@ -93,6 +95,15 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
   const [produits, setProduits] = useState<any[]>([]);
   const [campagnes, setCampagnes] = useState<any[]>([]);
   const [villes, setVilles] = useState<any[]>([]);
+  const [showDatePickerDemandes, setShowDatePickerDemandes] = useState<{
+    dateDebut: boolean;
+    dateFin: boolean;
+  }>({ dateDebut: false, dateFin: false });
+  
+  const [showDatePickerFactures, setShowDatePickerFactures] = useState<{
+    dateDebut: boolean;
+    dateFin: boolean;
+  }>({ dateDebut: false, dateFin: false });
 
   useEffect(() => {
     chargerDonneesInitiales();
@@ -117,7 +128,10 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
 
       // Extraire les villes uniques des exportateurs
       const villesUniques = [...new Set(exportateursData.map((exp: any) => exp.ville))];
-      setVilles(villesUniques.map(ville => ({ nom: ville })));
+      setVilles(villesUniques.map((ville, index) => ({ 
+        id: index, 
+        nom: ville 
+      })));
     } catch (error) {
       console.error('Erreur chargement données:', error);
     }
@@ -135,10 +149,9 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
       const data = await response.json();
       setDemandes(data);
       setSelectedDemandes([]);
-      console.log('Demandes récupérées:', data);
     } catch (error) {
       console.error('Erreur recherche demandes:', error);
-      setMessage('Erreur lors de la recherche');
+      setMessage('Erreur lors de la recherche des demandes');
     } finally {
       setLoading(false);
     }
@@ -149,7 +162,12 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
     try {
       const params = new URLSearchParams();
       Object.entries(filtresFactures).forEach(([key, value]) => {
-        if (value) params.append(key, String(value));
+        if (value) {
+          if (key === 'statut' && value === 'Tous') {
+            return;
+          }
+          params.append(key, String(value));
+        }
       });
 
       const response = await fetch(`http://localhost:5000/api/factures?${params}`);
@@ -158,7 +176,7 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
       setSelectedFactures([]);
     } catch (error) {
       console.error('Erreur recherche factures:', error);
-      setMessage('Erreur lors de la recherche');
+      setMessage('Erreur lors de la recherche des factures');
     } finally {
       setLoading(false);
     }
@@ -180,14 +198,14 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
         throw new Error('Demande non trouvée');
       }
 
-      // Créer la facture
+      // Créer la facture avec statut initial 'Non Validée'
       const factureData = {
         ID_DEMANDES: demandeId,
         REF_FACUTRES: numData.numeroFacture,
         CAMPAGNE_FACTURES: demande.CAMP_DEMANDE,
         DATE_FACTURES: new Date().toISOString().split('T')[0],
         NBRE_LOTS_FACTURES: demande.NBRELOT_DEMANDE,
-        VALIDER: 'Non Validée'
+        VALIDER: 'Non Validée' // Toujours créer les factures avec statut 'Non Validée'
       };
 
       const response = await fetch('http://localhost:5000/api/factures', {
@@ -212,11 +230,19 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
   };
 
   const validerFacture = async (factureId: number) => {
+    if (!window.confirm('Êtes-vous sûr de vouloir valider cette facture ?')) {
+      return;
+    }
+
     try {
-      const response = await fetch(`http://localhost:5000/api/factures/${factureId}/valider`, {
+      // Utiliser la route /annuler avec 'Validée' pour valider
+      const response = await fetch(`http://localhost:5000/api/factures/${factureId}/annuler`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ valider: true })
+        body: JSON.stringify({ 
+          statut: 'Validée',
+          raison: 'Validation manuelle'
+        })
       });
 
       const result = await response.json();
@@ -229,6 +255,65 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
       }
     } catch (error: any) {
       console.error('Erreur validation facture:', error);
+      setMessage(`Erreur: ${error.message}`);
+    }
+  };
+
+  const invaliderFacture = async (factureId: number) => {
+    if (!window.confirm('Êtes-vous sûr de vouloir rejeter cette facture ?')) {
+      return;
+    }
+
+    try {
+      // Utiliser la route /annuler avec 'Rejetée' pour rejeter
+      const response = await fetch(`http://localhost:5000/api/factures/${factureId}/annuler`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          statut: 'Rejetée',
+          raison: 'Rejet manuel'
+        })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setMessage('Facture rejetée avec succès');
+        await rechercherFactures();
+      } else {
+        throw new Error(result.error || 'Erreur rejet');
+      }
+    } catch (error: any) {
+      console.error('Erreur rejet facture:', error);
+      setMessage(`Erreur: ${error.message}`);
+    }
+  };
+
+  const annulerFacture = async (factureId: number) => {
+    if (!window.confirm('Êtes-vous sûr de vouloir annuler cette facture ?')) {
+      return;
+    }
+
+    try {
+      // Utiliser la route /annuler avec 'Annulée'
+      const response = await fetch(`http://localhost:5000/api/factures/${factureId}/annuler`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          raison: 'Annulation manuelle'
+        })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        setMessage('Facture annulée avec succès');
+        await rechercherFactures();
+      } else {
+        throw new Error(result.error || 'Erreur annulation');
+      }
+    } catch (error: any) {
+      console.error('Erreur annulation facture:', error);
       setMessage(`Erreur: ${error.message}`);
     }
   };
@@ -268,6 +353,20 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
     const file = event.target.files?.[0];
     if (!file) return;
 
+    // Vérifier que la facture est validée
+    const facture = factures.find(f => f.ID_FACTURES === factureId);
+    if (!facture) {
+      setMessage('Facture non trouvée');
+      event.target.value = '';
+      return;
+    }
+
+    if (facture.VALIDER !== 'Validée') {
+      setMessage('Seules les factures validées peuvent recevoir un fichier Excel');
+      event.target.value = '';
+      return;
+    }
+
     setLoading(true);
     setMessage('');
 
@@ -280,15 +379,11 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
           const data = e.target?.result;
           const workbook = XLSX.read(data, { type: 'binary' });
           
-          // Obtenir le nom de la première feuille (normalement "rptFacturesListExportXls")
           const firstSheetName = workbook.SheetNames[0];
           const worksheet = workbook.Sheets[firstSheetName];
           
-          // Convertir la feuille en tableau d'objets JSON
           const excelData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
           
-          // Rechercher la colonne "Montant facture" (colonne K dans l'exemple donné)
-          // Trouver l'index de la colonne Montant facture
           const headerRow = excelData[0] as string[];
           const montantColIndex = headerRow.findIndex(cell => 
             cell && cell.toString().toLowerCase().includes('montant facture')
@@ -298,11 +393,8 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
             throw new Error('Colonne "Montant facture" non trouvée dans le fichier Excel');
           }
           
-          // Prendre la première ligne de données (après l'en-tête)
-          // Rechercher la ligne correspondant à la facture (par numéro de facture ou autre identifiant)
           let montant = 0;
           
-          // Option 1: Prendre le montant de la première ligne de données
           if (excelData.length > 1) {
             const firstDataRow = excelData[1] as any[];
             if (firstDataRow && firstDataRow[montantColIndex]) {
@@ -310,25 +402,9 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
             }
           }
           
-          // Option 2: Rechercher par référence de facture si disponible
-          // const refFactureColIndex = headerRow.findIndex(cell => 
-          //   cell && cell.toString().toLowerCase().includes('facture')
-          // );
-          // if (refFactureColIndex !== -1) {
-          //   for (let i = 1; i < excelData.length; i++) {
-          //     const row = excelData[i] as any[];
-          //     if (row && row[refFactureColIndex] === factureRef) {
-          //       montant = parseFloat(row[montantColIndex]);
-          //       break;
-          //     }
-          //   }
-          // }
-          
           if (montant <= 0) {
             throw new Error('Montant non trouvé ou invalide dans le fichier Excel');
           }
-          
-          console.log('Montant extrait du fichier Excel:', montant);
           
           // Envoyer le montant au serveur
           const response = await fetch(`http://localhost:5000/api/factures/${factureId}/mettre-a-jour-montant`, {
@@ -350,7 +426,6 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
           setMessage(`Erreur: ${error.message}`);
         } finally {
           setLoading(false);
-          // Réinitialiser l'input file
           event.target.value = '';
         }
       };
@@ -397,6 +472,21 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
       setSelectedFactures([]);
     } else {
       setSelectedFactures(factures.map(f => f.ID_FACTURES));
+    }
+  };
+
+  const getBadgeColor = (statut: string) => {
+    switch (statut) {
+      case 'Validée':
+        return 'bg-green-100 text-green-800';
+      case 'Non Validée':
+        return 'bg-yellow-100 text-yellow-800';
+      case 'Rejetée':
+        return 'bg-orange-100 text-orange-800';
+      case 'Annulée':
+        return 'bg-red-100 text-red-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
     }
   };
 
@@ -470,25 +560,75 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
                 ))}
               </select>
             </div>
+            <div className="space-y-1">
+              <label className="font-medium text-gray-600">Ville</label>
+              <select 
+                className="w-full form-select"
+                value={filtresDemandes.ville}
+                onChange={(e) => setFiltresDemandes({...filtresDemandes, ville: e.target.value})}
+              >
+                <option value="">Toutes</option>
+                {villes.map(ville => (
+                  <option key={`ville-${ville.id}`} value={ville.nom}>{ville.nom}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="font-medium text-gray-600">Statut Facture</label>
+              <select 
+                className="w-full form-select"
+                value={filtresDemandes.statutFacture}
+                onChange={(e) => setFiltresDemandes({...filtresDemandes, statutFacture: e.target.value})}
+              >
+                <option value="">Tous</option>
+                <option value="En attente">En attente (pas encore facturé)</option>
+                <option value="Validée">Validée (facture validée)</option>
+                <option value="Rejetée">Rejetée (facture rejetée)</option>
+              </select>
+            </div>
             <div className="space-y-1 relative">
               <label className="font-medium text-gray-600">Date Début</label>
-              <input 
-                type="date" 
-                className="w-full form-input pr-8"
-                value={filtresDemandes.dateDebut}
-                onChange={(e) => setFiltresDemandes({...filtresDemandes, dateDebut: e.target.value})}
-              />
-              <CalendarIcon className="absolute right-2 top-7 h-5 w-5 text-gray-400" />
+              <div className="relative">
+                <input 
+                  type="date" 
+                  className="w-full form-input pr-8"
+                  value={filtresDemandes.dateDebut}
+                  onChange={(e) => setFiltresDemandes({...filtresDemandes, dateDebut: e.target.value})}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const input = document.createElement('input');
+                    input.type = 'date';
+                    input.click();
+                  }}
+                  className="absolute right-2 top-1/2 transform -translate-y-1/2"
+                >
+                  <CalendarIcon className="h-5 w-5 text-gray-400" />
+                </button>
+              </div>
             </div>
             <div className="space-y-1 relative">
               <label className="font-medium text-gray-600">Date Fin</label>
-              <input 
-                type="date" 
-                className="w-full form-input pr-8"
-                value={filtresDemandes.dateFin}
-                onChange={(e) => setFiltresDemandes({...filtresDemandes, dateFin: e.target.value})}
-              />
-              <CalendarIcon className="absolute right-2 top-7 h-5 w-5 text-gray-400" />
+              <div className="relative">
+                <input 
+                  type="date" 
+                  className="w-full form-input pr-8"
+                  value={filtresDemandes.dateFin}
+                  onChange={(e) => setFiltresDemandes({...filtresDemandes, dateFin: e.target.value})}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const input = document.createElement('input');
+                    input.type = 'date';
+                    input.click();
+                  }}
+                  className="absolute right-2 top-1/2 transform -translate-y-1/2"
+                >
+                  <CalendarIcon className="h-5 w-5 text-gray-400" />
+                </button>
+              </div>
             </div>
           </div>
           <div className="flex justify-center mt-6">
@@ -530,13 +670,14 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
                 <th className="p-3 font-semibold tracking-wider text-left">Poids (kg)</th>
                 <th className="p-3 font-semibold tracking-wider text-left">Campagne</th>
                 <th className="p-3 font-semibold tracking-wider text-left">Lots Validés</th>
+                <th className="p-3 font-semibold tracking-wider text-left">Statut Facture</th>
                 <th className="p-3 font-semibold tracking-wider text-left">Actions</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {demandes.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="text-center py-20">
+                  <td colSpan={10} className="text-center py-20">
                     <EmptyBoxIcon className="h-16 w-16 mx-auto text-gray-300" />
                     <p className="text-gray-500 font-semibold mt-2">Aucune demande validée à afficher</p>
                     <p className="text-gray-400 text-sm mt-1">
@@ -552,6 +693,7 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
                         type="checkbox" 
                         checked={selectedDemandes.includes(demande.ID_DEMANDE)}
                         onChange={() => handleSelectDemande(demande.ID_DEMANDE)}
+                        disabled={demande.facture_existe > 0}
                       />
                     </td>
                     <td className="p-3 font-medium">{demande.REF_DEMANDE}</td>
@@ -576,15 +718,32 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
                       </div>
                     </td>
                     <td className="p-3">
-                      <button
-                        onClick={() => genererFacture(demande.ID_DEMANDE)}
-                        disabled={demande.lots_valides_bv < demande.total_lots}
-                        className={`text-xs px-3 py-1 rounded flex items-center gap-1 ${demande.lots_valides_bv >= demande.total_lots ? 'bg-[#0d2d53] hover:bg-blue-800 text-white' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}
-                        title={demande.lots_valides_bv >= demande.total_lots ? "Générer la facture" : "Tous les lots doivent être validés"}
-                      >
-                        <DocumentIcon className="h-3 w-3" />
-                        Générer Facture
-                      </button>
+                      {demande.facture_existe > 0 ? (
+                        <span className={`px-2 py-1 rounded text-xs ${getBadgeColor(demande.STATUT_FACTURE || 'Non Validée')}`}>
+                          {demande.STATUT_FACTURE || 'Non Validée'}
+                        </span>
+                      ) : (
+                        <span className="px-2 py-1 rounded text-xs bg-gray-100 text-gray-800">
+                          En attente
+                        </span>
+                      )}
+                    </td>
+                    <td className="p-3">
+                      {demande.facture_existe > 0 ? (
+                        <div className="text-sm text-gray-500">
+                          Facture déjà créée
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => genererFacture(demande.ID_DEMANDE)}
+                          disabled={demande.lots_valides_bv < demande.total_lots}
+                          className={`text-xs px-3 py-1 rounded flex items-center gap-1 ${demande.lots_valides_bv >= demande.total_lots ? 'bg-[#0d2d53] hover:bg-blue-800 text-white' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}
+                          title={demande.lots_valides_bv >= demande.total_lots ? "Générer la facture" : "Tous les lots doivent être validés"}
+                        >
+                          <DocumentIcon className="h-3 w-3" />
+                          Générer Facture
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))
@@ -600,10 +759,9 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
             </div>
             <button
               onClick={() => {
-                // Filtrer seulement les demandes où tous les lots sont validés
                 const demandesCompletes = selectedDemandes.filter(id => {
                   const demande = demandes.find(d => d.ID_DEMANDE === id);
-                  return demande?.lots_valides_bv >= demande?.total_lots;
+                  return demande?.lots_valides_bv >= demande?.total_lots && demande?.facture_existe === 0;
                 });
                 
                 demandesCompletes.forEach(id => genererFacture(id));
@@ -647,36 +805,73 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
               />
             </div>
             <div className="space-y-1">
-              <label className="font-medium text-gray-600">État</label>
+              <label className="font-medium text-gray-600">Statut</label>
               <select 
                 className="w-full form-select"
-                value={filtresFactures.etat}
-                onChange={(e) => setFiltresFactures({...filtresFactures, etat: e.target.value})}
+                value={filtresFactures.statut}
+                onChange={(e) => setFiltresFactures({...filtresFactures, statut: e.target.value})}
               >
                 <option value="">Tous</option>
                 <option value="Validée">Validée</option>
-                <option value="Non Validée">Non Validée</option>
+                <option value="Annulée">Annulée</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="font-medium text-gray-600">Ville</label>
+              <select 
+                className="w-full form-select"
+                value={filtresFactures.ville}
+                onChange={(e) => setFiltresFactures({...filtresFactures, ville: e.target.value})}
+              >
+                <option value="">Toutes</option>
+                {villes.map(ville => (
+                  <option key={`ville-facture-${ville.id}`} value={ville.nom}>{ville.nom}</option>
+                ))}
               </select>
             </div>
             <div className="space-y-1 relative">
               <label className="font-medium text-gray-600">Date Début</label>
-              <input 
-                type="date" 
-                className="w-full form-input pr-8"
-                value={filtresFactures.dateDebut}
-                onChange={(e) => setFiltresFactures({...filtresFactures, dateDebut: e.target.value})}
-              />
-              <CalendarIcon className="absolute right-2 top-7 h-5 w-5 text-gray-400" />
+              <div className="relative">
+                <input 
+                  type="date" 
+                  className="w-full form-input pr-8"
+                  value={filtresFactures.dateDebut}
+                  onChange={(e) => setFiltresFactures({...filtresFactures, dateDebut: e.target.value})}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const input = document.createElement('input');
+                    input.type = 'date';
+                    input.click();
+                  }}
+                  className="absolute right-2 top-1/2 transform -translate-y-1/2"
+                >
+                  <CalendarIcon className="h-5 w-5 text-gray-400" />
+                </button>
+              </div>
             </div>
             <div className="space-y-1 relative">
               <label className="font-medium text-gray-600">Date Fin</label>
-              <input 
-                type="date" 
-                className="w-full form-input pr-8"
-                value={filtresFactures.dateFin}
-                onChange={(e) => setFiltresFactures({...filtresFactures, dateFin: e.target.value})}
-              />
-              <CalendarIcon className="absolute right-2 top-7 h-5 w-5 text-gray-400" />
+              <div className="relative">
+                <input 
+                  type="date" 
+                  className="w-full form-input pr-8"
+                  value={filtresFactures.dateFin}
+                  onChange={(e) => setFiltresFactures({...filtresFactures, dateFin: e.target.value})}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const input = document.createElement('input');
+                    input.type = 'date';
+                    input.click();
+                  }}
+                  className="absolute right-2 top-1/2 transform -translate-y-1/2"
+                >
+                  <CalendarIcon className="h-5 w-5 text-gray-400" />
+                </button>
+              </div>
             </div>
             <div className="space-y-1">
               <label className="font-medium text-gray-600">Campagne</label>
@@ -731,7 +926,7 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
                 <th className="p-3 font-semibold tracking-wider text-left">Campagne</th>
                 <th className="p-3 font-semibold tracking-wider text-left">Date Facture</th>
                 <th className="p-3 font-semibold tracking-wider text-left">Montant (FCFA)</th>
-                <th className="p-3 font-semibold tracking-wider text-left">État</th>
+                <th className="p-3 font-semibold tracking-wider text-left">Statut</th>
                 <th className="p-3 font-semibold tracking-wider text-left">Actions</th>
               </tr>
             </thead>
@@ -741,13 +936,16 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
                   <td colSpan={10} className="text-center py-20">
                     <EmptyBoxIcon className="h-16 w-16 mx-auto text-gray-300" />
                     <p className="text-gray-500 font-semibold mt-2">Aucune facture à afficher</p>
+                    <p className="text-gray-400 text-sm mt-1">
+                      Utilisez les filtres ci-dessus pour rechercher des factures
+                    </p>
                   </td>
                 </tr>
               ) : (
                 factures.map(facture => (
                   <tr 
                     key={facture.ID_FACTURES} 
-                    className={`hover:bg-gray-50 ${facture.VALIDER === 'Validée' ? 'bg-green-50' : ''}`}
+                    className={`hover:bg-gray-50 ${facture.VALIDER === 'Validée' ? 'bg-green-50' : facture.VALIDER === 'Annulée' ? 'bg-red-50' : facture.VALIDER === 'Rejetée' ? 'bg-orange-50' : ''}`}
                   >
                     <td className="p-3">
                       <input 
@@ -768,23 +966,43 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
                       {parseFloat(facture.MONTANT_FACTURES as any).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}
                     </td>
                     <td className="p-3">
-                      <span className={`px-2 py-1 rounded text-xs ${facture.VALIDER === 'Validée' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                      <span className={`px-2 py-1 rounded text-xs ${getBadgeColor(facture.VALIDER)}`}>
                         {facture.VALIDER}
                       </span>
                     </td>
                     <td className="p-3">
-                      <div className="flex gap-2">
-                        {facture.VALIDER !== 'Validée' && (
+                      <div className="flex flex-wrap gap-2">
+                        {facture.VALIDER === 'Non Validée' && (
+                          <>
+                            <button
+                              onClick={() => validerFacture(facture.ID_FACTURES)}
+                              className="bg-green-600 hover:bg-green-700 text-white text-xs px-3 py-1 rounded flex items-center gap-1"
+                              title="Valider la facture"
+                            >
+                              <CheckIcon className="h-3 w-3" />
+                              Valider
+                            </button>
+                            <button
+                              onClick={() => invaliderFacture(facture.ID_FACTURES)}
+                              className="bg-orange-600 hover:bg-orange-700 text-white text-xs px-3 py-1 rounded flex items-center gap-1"
+                              title="Rejeter la facture"
+                            >
+                              Rejeter
+                            </button>
+                          </>
+                        )}
+                        
+                        {facture.VALIDER === 'Validée' && (
                           <button
-                            onClick={() => validerFacture(facture.ID_FACTURES)}
-                            className="bg-green-600 hover:bg-green-700 text-white text-xs px-3 py-1 rounded flex items-center gap-1"
-                            title="Valider la facture"
+                            onClick={() => annulerFacture(facture.ID_FACTURES)}
+                            className="bg-red-600 hover:bg-red-700 text-white text-xs px-3 py-1 rounded flex items-center gap-1"
+                            title="Annuler la facture"
                           >
-                            <CheckIcon className="h-3 w-3" />
-                            Valider
+                            Annuler
                           </button>
                         )}
-                        <label className={`text-xs px-3 py-1 rounded flex items-center gap-1 cursor-pointer ${facture.VALIDER === 'Validée' ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}>
+                        
+                        <label className={`text-xs px-3 py-1 rounded flex items-center gap-1 ${facture.VALIDER === 'Validée' ? 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}>
                           <UploadIcon className="h-3 w-3" />
                           Charger Excel
                           <input
@@ -793,7 +1011,7 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
                             className="hidden"
                             onChange={(e) => handleFileUpload(e, facture.ID_FACTURES)}
                             disabled={facture.VALIDER !== 'Validée'}
-                            title={facture.VALIDER === 'Validée' ? "Charger un fichier Excel pour mettre à jour le montant" : "La facture doit être validée pour charger un fichier Excel"}
+                            title={facture.VALIDER === 'Validée' ? "Charger un fichier Excel pour mettre à jour le montant" : "Seules les factures validées peuvent recevoir un fichier Excel"}
                           />
                         </label>
                         <button

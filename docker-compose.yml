@@ -1,0 +1,33 @@
+version: '3.9'
+
+services:
+  backend:
+    build: ./backend
+    container_name: qualitis-backend
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      # host.docker.internal permet d'accéder à MySQL sur la machine hôte depuis Docker
+      - DB_HOST=host.docker.internal
+      - DB_USER=root
+      - DB_PASSWORD=
+      - DB_NAME=base_qualite
+      - DB_PORT=3306
+    networks:
+      - qualitis-network
+
+  frontend:
+    build: .
+    container_name: qualitis-frontend
+    restart: always
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - qualitis-network
+
+networks:
+  qualitis-network:
+    driver: bridge
