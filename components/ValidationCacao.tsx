@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import API_BASE_URL from '../config';
 import {
   CheckCircleIcon,
   BackArrowIcon,
@@ -103,7 +104,7 @@ const ValidationCacao: React.FC<ValidationCacaoProps> = ({ onNavigateBack }) => 
     try {
       setLoading(true);
       // Charger TOUTES les analyses (pas seulement les validées)
-      const response = await fetch('http://localhost:5000/api/analyses/cacao?seulementValidees=false');
+      const response = await fetch(`${API_BASE_URL}/api/analyses/cacao?seulementValidees=false`);
       const data = await response.json();
       setAnalyses(data);
       setAnalysesFiltrees(data);
@@ -118,17 +119,17 @@ const ValidationCacao: React.FC<ValidationCacaoProps> = ({ onNavigateBack }) => 
   const chargerFiltres = async () => {
     try {
       // Charger les exportateurs
-      const responseExportateurs = await fetch('http://localhost:5000/api/exportateurs');
+      const responseExportateurs = await fetch(`${API_BASE_URL}/api/exportateurs`);
       const dataExportateurs = await responseExportateurs.json();
       setExportateurs(dataExportateurs);
 
       // Charger les campagnes
-      const responseCampagnes = await fetch('http://localhost:5000/api/campagnes');
+      const responseCampagnes = await fetch(`${API_BASE_URL}/api/campagnes`);
       const dataCampagnes = await responseCampagnes.json();
       setCampagnes(dataCampagnes);
 
       // Charger les villes uniques depuis toutes les analyses
-      const responseAnalyses = await fetch('http://localhost:5000/api/analyses/cacao?seulementValidees=false');
+      const responseAnalyses = await fetch(`${API_BASE_URL}/api/analyses/cacao?seulementValidees=false`);
       const analysesData = await responseAnalyses.json();
       const villesUniques = [...new Set(analysesData.map((a: any) => a.VILLE_DEMANDE).filter(Boolean))];
       setVilles(villesUniques);
@@ -253,7 +254,7 @@ const validerAnalyses = async () => {
 
     try {
       // Utiliser la nouvelle route de transfert
-      const response = await fetch('http://localhost:5000/api/analyses/transfert-validation-bv', {
+      const response = await fetch(`${API_BASE_URL}/api/analyses/transfert-validation-bv`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ analysesIds: selection })
@@ -283,7 +284,7 @@ const validerAnalyses = async () => {
   const rejeterAnalyse = async (id: number) => {
     if (confirm('Voulez-vous vraiment rejeter cette analyse?')) {
       try {
-        const response = await fetch('http://localhost:5000/api/analyses/valider', {
+        const response = await fetch(`${API_BASE_URL}/api/analyses/valider`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ analysesIds: [id], valider: false })
@@ -323,7 +324,7 @@ const validerAnalyses = async () => {
 
   const sauvegarderModification = async (id: number) => {
     try {
-      const response = await fetch(`http://localhost:5000/api/analyses/${id}`, {
+      const response = await fetch(`${API_BASE_URL}/api/analyses/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editingData)
@@ -349,7 +350,7 @@ const validerAnalyses = async () => {
   const exporterAnalyses = async () => {
     try {
       // Construire l'URL avec les filtres actuels
-      let url = 'http://localhost:5000/api/analyses/cacao/export-txt?';
+      let url = `${API_BASE_URL}/api/analyses/cacao/export-txt?`;
       const params = new URLSearchParams();
       
       if (filtres.refDemande) params.append('refDemande', filtres.refDemande);

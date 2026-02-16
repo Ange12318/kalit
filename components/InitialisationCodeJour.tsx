@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import API_BASE_URL from '../config';  // adapte le chemin
 import {
   BackArrowIcon,
   GearIcon,
@@ -26,7 +27,7 @@ const InitialisationCodeJour: React.FC<InitialisationCodeJourProps> = ({ onNavig
     const fetchCodeJourState = async () => {
       setLoading(true);
       try {
-        const response = await fetch('http://localhost:5000/api/code-jour/current');
+        const response = await fetch(`${API_BASE_URL}/api/code-jour/current`);
         const data = await response.json();
         
         if (data.statut === 'ACTIF') {
@@ -36,7 +37,7 @@ const InitialisationCodeJour: React.FC<InitialisationCodeJourProps> = ({ onNavig
           setIsActive(true);
           
           // Récupérer le nombre de lots codifiés aujourd'hui
-          const countResponse = await fetch('http://localhost:5000/api/lots/codified/count-today');
+          const countResponse = await fetch(`${API_BASE_URL}/api/lots/codified/count-today`);
           const countData = await countResponse.json();
           setLotsCodifiedCount(countData.count || 0);
         } else {
@@ -61,12 +62,12 @@ const InitialisationCodeJour: React.FC<InitialisationCodeJourProps> = ({ onNavig
 
     const updateCounter = async () => {
       try {
-        const countResponse = await fetch('http://localhost:5000/api/lots/codified/count-today');
+        const countResponse = await fetch(`${API_BASE_URL}/api/lots/codified/count-today`);
         const countData = await countResponse.json();
         setLotsCodifiedCount(countData.count || 0);
         
         // Mettre à jour aussi le code du jour
-        const codeResponse = await fetch('http://localhost:5000/api/code-jour/current');
+        const codeResponse = await fetch(`${API_BASE_URL}/api/code-jour/current`);
         const codeData = await codeResponse.json();
         if (codeData.statut === 'ACTIF') {
           setCurrentCode(codeData.codeJour.toString());
@@ -108,7 +109,7 @@ const InitialisationCodeJour: React.FC<InitialisationCodeJourProps> = ({ onNavig
     const formattedDate = today.toISOString();
     
     try {
-      const response = await fetch('http://localhost:5000/api/code-jour/initialize', {
+      const response = await fetch(`${API_BASE_URL}/api/code-jour/initialize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -139,7 +140,7 @@ const InitialisationCodeJour: React.FC<InitialisationCodeJourProps> = ({ onNavig
   const handleReset = async () => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:5000/api/code-jour/reset', {
+      const response = await fetch(`${API_BASE_URL}/api/code-jour/reset`, {
         method: 'POST'
       });
 

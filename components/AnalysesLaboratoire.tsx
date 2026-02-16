@@ -1,4 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
+import API_BASE_URL from '../config';  // adapte le chemin
+
 import {
   BackArrowIcon,
   MicroscopeIcon,
@@ -1733,7 +1735,7 @@ const chargerLot = async () => {
   setSuccess('');
   
   try {
-    const response = await fetch(`http://localhost:5000/api/codes-secrets/valider/${codeSecret}`);
+    const response = await fetch(`${API_BASE_URL}/api/codes-secrets/valider/${codeSecret}`);
     
     if (!response.ok) {
       const errorData = await response.json();
@@ -1743,7 +1745,7 @@ const chargerLot = async () => {
     const data = await response.json();
     
     // Vérifier si ce lot a déjà été analysé et validé
-    const checkValidationResponse = await fetch(`http://localhost:5000/api/analyses/validees?codeSecret=${codeSecret}`);
+    const checkValidationResponse = await fetch(`${API_BASE_URL}/api/analyses/validees?codeSecret=${codeSecret}`);
     
     if (checkValidationResponse.ok) {
       const validationData = await checkValidationResponse.json();
@@ -1885,7 +1887,7 @@ const enregistrerAnalyseCacao = async () => {
         analyseurId: 7
       };
       
-      const response = await fetch('http://localhost:5000/api/analyses/cacao', {
+      const response = await fetch(`${API_BASE_URL}/api/analyses/cacao`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(donneesEnvoi)
@@ -1982,7 +1984,7 @@ const enregistrerAnalyseCacao = async () => {
     setSuccess('');
     
     try {
-      const response = await fetch('http://localhost:5000/api/analyses/cafe', {
+      const response = await fetch(`${API_BASE_URL}/api/analyses/cafe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

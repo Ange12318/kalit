@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import API_BASE_URL from '../config';
 import {
   BackArrowIcon,
   ChartBarIcon,
@@ -196,7 +197,7 @@ const ResultatsAnalyses: React.FC<ResultatsAnalysesProps> = ({ onNavigateBack })
       
       lastSearchParams.current = cacheKey;
       
-      const url = `http://localhost:5000/api/analyses/cacao${queryString ? `?${queryString}` : ''}`;
+      const url = `${API_BASE_URL}/api/analyses/cacao${queryString ? `?${queryString}` : ''}`;
       
       console.log('URL de requête analyses:', url);
       
@@ -270,7 +271,7 @@ const ResultatsAnalyses: React.FC<ResultatsAnalysesProps> = ({ onNavigateBack })
       if (exportateur && exportateur !== 'all') params.append('exportateur', exportateur);
       if (statutValidation && statutValidation !== 'all') params.append('statut', statutValidation);
       
-      const url = `http://localhost:5000/api/analyses/validees${params.toString() ? `?${params.toString()}` : ''}`;
+      const url = `${API_BASE_URL}/api/analyses/validees${params.toString() ? `?${params.toString()}` : ''}`;
       
       console.log('URL de requête analyses validées:', url);
       
@@ -324,14 +325,14 @@ const ResultatsAnalyses: React.FC<ResultatsAnalysesProps> = ({ onNavigateBack })
   const chargerDonneesFiltres = async () => {
     try {
       // Charger les campagnes
-      const campResponse = await fetch('http://localhost:5000/api/campagnes');
+      const campResponse = await fetch(`${API_BASE_URL}/api/campagnes`);
       if (campResponse.ok) {
         const campData = await campResponse.json();
         setCampagnes(campData.map((c: any) => c.nom));
       }
       
       // Charger les exportateurs
-      const expResponse = await fetch('http://localhost:5000/api/exportateurs');
+      const expResponse = await fetch(`${API_BASE_URL}/api/exportateurs`);
       if (expResponse.ok) {
         const expData = await expResponse.json();
         setExportateurs(expData);
@@ -340,7 +341,7 @@ const ResultatsAnalyses: React.FC<ResultatsAnalysesProps> = ({ onNavigateBack })
       // Charger les villes depuis les analyses existantes
       setTimeout(async () => {
         try {
-          const villeResponse = await fetch('http://localhost:5000/api/analyses/cacao?limit=50');
+          const villeResponse = await fetch(`${API_BASE_URL}/api/analyses/cacao?limit=50`);
           if (villeResponse.ok) {
             const villeData = await villeResponse.json();
             const villesUniques = [...new Set(villeData
@@ -441,7 +442,7 @@ const ResultatsAnalyses: React.FC<ResultatsAnalysesProps> = ({ onNavigateBack })
     try {
       console.log('Validation des analyses:', selectedAnalyses, 'valider:', valider);
       
-      const response = await fetch('http://localhost:5000/api/analyses/valider', {
+      const response = await fetch(`${API_BASE_URL}/api/analyses/valider`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -540,7 +541,7 @@ const ResultatsAnalyses: React.FC<ResultatsAnalysesProps> = ({ onNavigateBack })
     setInfo('');
     
     try {
-      const response = await fetch(`http://localhost:5000/api/analyses/${editingAnalysis.ID_ANALYSE_KKO}`, {
+      const response = await fetch(`${API_BASE_URL}/api/analyses/${editingAnalysis.ID_ANALYSE_KKO}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(editingAnalysis)

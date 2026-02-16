@@ -1,5 +1,7 @@
 
 import React from 'react';
+import API_BASE_URL from '../config';  // adapte le chemin
+
 import FeatureCard from './FeatureCard';
 import {
   DashboardIcon,

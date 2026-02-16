@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import API_BASE_URL from '../config';  // adapte le chemin
 import * as XLSX from 'xlsx';
 import {
   BackArrowIcon,
@@ -113,9 +114,9 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
     try {
       // Charger les listes déroulantes
       const [expRes, prodRes, campRes] = await Promise.all([
-        fetch('http://localhost:5000/api/exportateurs'),
-        fetch('http://localhost:5000/api/produits'),
-        fetch('http://localhost:5000/api/campagnes')
+        fetch(`${API_BASE_URL}/api/exportateurs`),
+        fetch(`${API_BASE_URL}/api/produits`),
+        fetch(`${API_BASE_URL}/api/campagnes`)
       ]);
 
       const exportateursData = await expRes.json();
@@ -145,7 +146,7 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
         if (value) params.append(key, String(value));
       });
 
-      const response = await fetch(`http://localhost:5000/api/factures/demandes-validees?${params}`);
+      const response = await fetch(`${API_BASE_URL}/api/factures/demandes-validees?${params}`);
       const data = await response.json();
       setDemandes(data);
       setSelectedDemandes([]);
@@ -170,7 +171,7 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
         }
       });
 
-      const response = await fetch(`http://localhost:5000/api/factures?${params}`);
+      const response = await fetch(`${API_BASE_URL}/api/factures?${params}`);
       const data = await response.json();
       setFactures(data.data || []);
       setSelectedFactures([]);
@@ -185,7 +186,7 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
   const genererFacture = async (demandeId: number) => {
     try {
       // Générer le numéro de facture
-      const numResponse = await fetch('http://localhost:5000/api/factures/generer-numero');
+      const numResponse = await fetch(`${API_BASE_URL}/api/factures/generer-numero`);
       const numData = await numResponse.json();
 
       if (!numData.success) {
@@ -208,7 +209,7 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
         VALIDER: 'Non Validée' // Toujours créer les factures avec statut 'Non Validée'
       };
 
-      const response = await fetch('http://localhost:5000/api/factures', {
+      const response = await fetch(`${API_BASE_URL}/api/factures`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(factureData)
@@ -236,7 +237,7 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
 
     try {
       // Utiliser la route /annuler avec 'Validée' pour valider
-      const response = await fetch(`http://localhost:5000/api/factures/${factureId}/annuler`, {
+      const response = await fetch(`${API_BASE_URL}/api/factures/${factureId}/annuler`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -266,7 +267,7 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
 
     try {
       // Utiliser la route /annuler avec 'Rejetée' pour rejeter
-      const response = await fetch(`http://localhost:5000/api/factures/${factureId}/annuler`, {
+      const response = await fetch(`${API_BASE_URL}/api/factures/${factureId}/annuler`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -296,7 +297,7 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
 
     try {
       // Utiliser la route /annuler avec 'Annulée'
-      const response = await fetch(`http://localhost:5000/api/factures/${factureId}/annuler`, {
+      const response = await fetch(`${API_BASE_URL}/api/factures/${factureId}/annuler`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -326,7 +327,7 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
 
     try {
       const facturesIds = selectedFactures.join(',');
-      const response = await fetch(`http://localhost:5000/api/factures/export-txt?facturesIds=${facturesIds}`);
+      const response = await fetch(`${API_BASE_URL}/api/factures/export-txt?facturesIds=${facturesIds}`);
       
       if (!response.ok) {
         throw new Error('Erreur lors de l\'export');
@@ -407,7 +408,7 @@ const EditionFactures: React.FC<EditionFacturesProps> = ({ onNavigateBack }) => 
           }
           
           // Envoyer le montant au serveur
-          const response = await fetch(`http://localhost:5000/api/factures/${factureId}/mettre-a-jour-montant`, {
+          const response = await fetch(`${API_BASE_URL}/api/factures/${factureId}/mettre-a-jour-montant`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ nouveauMontant: montant })

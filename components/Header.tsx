@@ -1,5 +1,7 @@
 
 import React from 'react';
+import API_BASE_URL from '../config';  // adapte le chemin
+
 import { LogoIcon, UserIcon, LogoutIcon } from './Icons';
 
 const Header: React.FC = () => {

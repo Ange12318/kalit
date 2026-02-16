@@ -20,6 +20,13 @@ const pool = mysql.createPool({
   queueLimit: 0
 });
 
+// Autoriser les requêtes depuis n'importe quelle origine du réseau
+app.use(cors({
+    origin: '*',  // En réseau interne, c'est acceptable
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    credentials: true
+}));
+
 // Tester la connexion
 pool.getConnection((err, connection) => {
   if (err) {
@@ -5812,7 +5819,7 @@ app.get('/api/campagnes', (req, res) => {
 // DÉMARRAGE DU SERVEUR (DOIT ÊTRE À LA FIN)
 // ===============================================
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0',() => {
   console.log(`Serveur démarré sur le port ${PORT}`);
   console.log(`URL: http://localhost:${PORT}`);
   console.log('Routes disponibles:');

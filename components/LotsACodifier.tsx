@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import API_BASE_URL from '../config';  // adapte le chemin
 import {
   BackArrowIcon, CalendarIcon, SearchIcon, CheckCircleIcon, PrintIcon,
   BoxIcon, KeyIcon, QuestionMarkCircleIcon, RefreshIcon, SparklesIcon,
@@ -74,8 +75,8 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
     const fetchSelects = async () => {
       try {
         const [expRes, prodRes] = await Promise.all([
-          fetch('http://localhost:5000/api/exportateurs'),
-          fetch('http://localhost:5000/api/produits')
+          fetch(`${API_BASE_URL}/api/exportateurs`),
+          fetch(`${API_BASE_URL}/api/produits`)
         ]);
         const exportateursData = await expRes.json();
         const produitsData = await prodRes.json();
@@ -124,7 +125,7 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
       if (filters.dateFin) params.append('dateFin', filters.dateFin);
       params.append('sondes', 'true');
 
-      const res = await fetch(`http://localhost:5000/api/sondage/lots?${params}`);
+      const res = await fetch(`${API_BASE_URL}/api/sondage/lots?${params}`);
       const data = await res.json();
       
       // Filtrer uniquement les lots sondés (ETAT_SONDAGE_LOTS = 'OUI')
@@ -144,12 +145,12 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
   // Charger les codes secrets (uniquement ceux d'aujourd'hui par défaut)
   const chargerCodesSecrets = async () => {
     try {
-      let url = 'http://localhost:5000/api/codes-secrets';
+      let url = `${API_BASE_URL}/api/codes-secrets`;
       
       // Si on veut filtrer par lots sélectionnés
       if (showOnlySelectedCodes && selectedLots.length > 0) {
         const lotIdsParam = selectedLots.join(',');
-        url = `http://localhost:5000/api/codes-secrets?lotIds=${lotIdsParam}`;
+        url = `${API_BASE_URL}/api/codes-secrets?lotIds=${lotIdsParam}`;
       }
       
       const res = await fetch(url);
@@ -223,7 +224,7 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
   const genererPremierCode = async (lotId: number) => {
     setGeneratingCodes(true);
     try {
-      const res = await fetch('http://localhost:5000/api/codes-secrets/generer-premier', {
+      const res = await fetch(`${API_BASE_URL}/api/codes-secrets/generer-premier`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lotId })
@@ -253,7 +254,7 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
   const genererReprise = async (lotId: number) => {
     setGeneratingCodes(true);
     try {
-      const res = await fetch('http://localhost:5000/api/codes-secrets/generer-reprise', {
+      const res = await fetch(`${API_BASE_URL}/api/codes-secrets/generer-reprise`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lotId })
@@ -286,7 +287,7 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
 
     setGeneratingCodes(true);
     try {
-      const res = await fetch('http://localhost:5000/api/codes-secrets/generer-selection', {
+      const res = await fetch(`${API_BASE_URL}/api/codes-secrets/generer-selection`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lotsIds: selectedLots })
@@ -321,7 +322,7 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
 
     setGeneratingReprises(true);
     try {
-      const res = await fetch('http://localhost:5000/api/codes-secrets/generer-reprises-selection', {
+      const res = await fetch(`${API_BASE_URL}/api/codes-secrets/generer-reprises-selection`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lotsIds: selectedLots })
@@ -349,7 +350,7 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
   const imprimerCode = async (codeSecret: CodeSecret) => {
     setPrintLoading(true);
     try {
-      const res = await fetch('http://localhost:5000/api/codes-secrets/imprimer', {
+      const res = await fetch(`${API_BASE_URL}/api/codes-secrets/imprimer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ codeSecret })
@@ -384,7 +385,7 @@ const LotsACodifier: React.FC<LotsACodifierProps> = ({ onNavigateBack, onIncreme
 
     setPrintLoading(true);
     try {
-      const res = await fetch('http://localhost:5000/api/codes-secrets/imprimer-selection', {
+      const res = await fetch(`${API_BASE_URL}/api/codes-secrets/imprimer-selection`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ codesSecrets: filteredCodesSecrets })

@@ -1,4 +1,6 @@
 import React from 'react';
+import API_BASE_URL from '../config';  // adapte le chemin
+
 import {
   BackArrowIcon, CalendarIcon, SearchIcon, RegisterIcon, PrintIcon, ExportIcon,
 } from './Icons';

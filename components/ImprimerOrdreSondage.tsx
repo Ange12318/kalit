@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { BackArrowIcon, PrintIcon } from './Icons';
+import API_BASE_URL from '../config';  // adapte le chemin
+
 
 type Lot = {
   numero?: string;
@@ -47,21 +49,21 @@ const ImprimerOrdreSondage: React.FC<{
       setLoading(true);
       try {
         // Récupérer la demande principale avec jointure exportateur
-        const res = await fetch(`http://localhost:5000/api/demandes/${demandeId}`);
+        const res = await fetch(`${API_BASE_URL}/api/demandes/${demandeId}`);
         if (res.ok) {
           const data = await res.json();
           console.log('Données demande récupérées:', data);
           setDemande(data);
         } else {
           // Fallback: recherche par référence
-          const res2 = await fetch(`http://localhost:5000/api/demandes?ref=${demandeId}`);
+          const res2 = await fetch(`${API_BASE_URL}/api/demandes?ref=${demandeId}`);
           const d2 = await res2.json();
           setDemande(Array.isArray(d2) ? d2[0] || null : d2 || null);
         }
 
         // Récupérer les lots depuis l'endpoint dédié
         try {
-          const rl = await fetch(`http://localhost:5000/api/demandes/${demandeId}/lots`);
+          const rl = await fetch(`${API_BASE_URL}/api/demandes/${demandeId}/lots`);
           if (rl.ok) {
             const lotsData = await rl.json();
             console.log('Lots récupérés:', lotsData);

@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import API_BASE_URL from '../config';  // adapte le chemin
+
 import {
   WrenchIcon,
   LogoutIcon,
@@ -62,7 +64,7 @@ const ConfigurationGenerale: React.FC<ConfigurationGeneraleProps> = ({ onNavigat
 
   const chargerParametres = async () => {
     try {
-      const response = await fetch('http://localhost:5000/api/parametres');
+      const response = await fetch(`${API_BASE_URL}/api/parametres`);
       const data = await response.json();
       if (data) {
         setParametres(data);
@@ -109,7 +111,7 @@ const ConfigurationGenerale: React.FC<ConfigurationGeneraleProps> = ({ onNavigat
         LAST_CODE_SECRET: 0
       };
 
-      const response = await fetch('http://localhost:5000/api/parametres', {
+      const response = await fetch(`${API_BASE_URL}/api/parametres`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

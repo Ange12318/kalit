@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import API_BASE_URL from '../config';  // adapte le chemin
+
 import {
   BackArrowIcon,
   SearchIcon,
@@ -80,10 +82,10 @@ const DemandesAutorites: React.FC<{
     const fetchSelects = async () => {
       try {
         const [exp, prod, camp, postes] = await Promise.all([
-          fetch('http://localhost:5000/api/exportateurs').then(r => r.json()),
-          fetch('http://localhost:5000/api/produits').then(r => r.json()),
-          fetch('http://localhost:5000/api/campagnes').then(r => r.json()),
-          fetch('http://localhost:5000/api/postes-controle').then(r => r.json()),
+          fetch(`${API_BASE_URL}/api/exportateurs`).then(r => r.json()),
+          fetch(`${API_BASE_URL}/api/produits`).then(r => r.json()),
+          fetch(`${API_BASE_URL}/api/campagnes`).then(r => r.json()),
+          fetch(`${API_BASE_URL}/api/postes-controle`).then(r => r.json()),
         ]);
         setExportateurs(exp);
         setProduits(prod);
@@ -111,7 +113,7 @@ const DemandesAutorites: React.FC<{
       if (dateDebut) params.append('dateDebut', dateDebut);
       if (dateFin) params.append('dateFin', dateFin);
 
-      const res = await fetch(`http://localhost:5000/api/demandes?${params}`);
+      const res = await fetch(`${API_BASE_URL}/api/demandes?${params}`);
       const data = await res.json();
       setDemandes(data);
       setSelectedIds([]); // Réinitialiser la sélection après recherche
@@ -134,7 +136,7 @@ const DemandesAutorites: React.FC<{
     setLoading(true);
     try {
       const promises = selectedIds.map(id => 
-        fetch(`http://localhost:5000/api/demandes/${id}`, { method: 'DELETE' })
+        fetch(`${API_BASE_URL}/api/demandes/${id}`, { method: 'DELETE' })
       );
       
       const results = await Promise.all(promises);

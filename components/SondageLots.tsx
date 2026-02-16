@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import API_BASE_URL from '../config';
 import {
   BackArrowIcon,
   CalendarIcon,
@@ -64,9 +65,9 @@ const SondageLots: React.FC<SondageLotsProps> = ({ onNavigateBack }) => {
     const fetchSelects = async () => {
       try {
         const [expRes, prodRes, usersRes] = await Promise.all([
-          fetch('http://localhost:5000/api/exportateurs'),
-          fetch('http://localhost:5000/api/produits'),
-          fetch('http://localhost:5000/api/utilisateurs')
+          fetch(`${API_BASE_URL}/api/exportateurs`),
+          fetch(`${API_BASE_URL}/api/produits`),
+          fetch(`${API_BASE_URL}/api/utilisateurs`)
         ]);
         const exportateursData = await expRes.json();
         const produitsData = await prodRes.json();
@@ -99,7 +100,7 @@ const SondageLots: React.FC<SondageLotsProps> = ({ onNavigateBack }) => {
       if (filters.dateDebut) params.append('dateDebut', filters.dateDebut);
       if (filters.dateFin) params.append('dateFin', filters.dateFin);
 
-      const res = await fetch(`http://localhost:5000/api/sondage/lots?${params}`);
+      const res = await fetch(`${API_BASE_URL}/api/sondage/lots?${params}`);
       const data = await res.json();
       setLots(data);
       setSelectedLots([]);
@@ -156,7 +157,7 @@ const SondageLots: React.FC<SondageLotsProps> = ({ onNavigateBack }) => {
     setLoading(true);
     try {
       // Utiliser l'endpoint d'enregistrement complet
-      const res = await fetch('http://localhost:5000/api/lots/enregistrerSondage', {
+      const res = await fetch(`${API_BASE_URL}/api/lots/enregistrerSondage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

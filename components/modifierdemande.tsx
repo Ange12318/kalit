@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import API_BASE_URL from '../config';
 import { BackArrowIcon, SaveIcon } from './Icons';
 
 const ModifierDemande: React.FC<{ 
@@ -53,12 +54,12 @@ const ModifierDemande: React.FC<{
         
         // Charger les listes déroulantes
         const [exp, prod, camp, mag, grad, demande] = await Promise.all([
-          fetch('http://localhost:5000/api/exportateurs').then(r => r.json()),
-          fetch('http://localhost:5000/api/produits').then(r => r.json()),
-          fetch('http://localhost:5000/api/campagnes').then(r => r.json()),
-          fetch('http://localhost:5000/api/magasins').then(r => r.json()),
-          fetch('http://localhost:5000/api/grades').then(r => r.json()),
-          fetch(`http://localhost:5000/api/demandes/${demandeId}`).then(r => {
+          fetch(`${API_BASE_URL}/api/exportateurs`).then(r => r.json()),
+          fetch(`${API_BASE_URL}/api/produits`).then(r => r.json()),
+          fetch(`${API_BASE_URL}/api/campagnes`).then(r => r.json()),
+          fetch(`${API_BASE_URL}/api/magasins`).then(r => r.json()),
+          fetch(`${API_BASE_URL}/api/grades`).then(r => r.json()),
+          fetch(`${API_BASE_URL}/api/demandes/${demandeId}`).then(r => {
             if (!r.ok) throw new Error('Demande non trouvée');
             return r.json();
           })
@@ -84,7 +85,7 @@ const ModifierDemande: React.FC<{
         setDateValidation(d.DATE_EXPIR_DEMANDE ? d.DATE_EXPIR_DEMANDE.slice(0, 10) : today);
 
         // Charger les lots associés
-        const lotsRes = await fetch(`http://localhost:5000/api/demandes/${demandeId}/lots`);
+        const lotsRes = await fetch(`${API_BASE_URL}/api/demandes/${demandeId}/lots`);
         if (lotsRes.ok) {
           const lotsData = await lotsRes.json();
           setLots(lotsData.length > 0 ? lotsData : [
@@ -256,7 +257,7 @@ const ModifierDemande: React.FC<{
         })),
       };
 
-      const res = await fetch(`http://localhost:5000/api/demandes/${demandeId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/demandes/${demandeId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

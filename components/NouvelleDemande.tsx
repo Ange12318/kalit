@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { BackArrowIcon, SaveIcon } from './Icons';
+import API_BASE_URL from '../config';  // adapte le chemin
+
 
 const NouvelleDemande: React.FC<{ onNavigateBack: () => void }> = ({ onNavigateBack }) => {
   const [exportateurs, setExportateurs] = useState<any[]>([]);
@@ -56,11 +58,11 @@ const NouvelleDemande: React.FC<{ onNavigateBack: () => void }> = ({ onNavigateB
     const fetchAll = async () => {
       try {
         const responses = await Promise.all([
-          fetch('http://localhost:5000/api/exportateurs'),
-          fetch('http://localhost:5000/api/produits'),
-          fetch('http://localhost:5000/api/campagnes'),
-          fetch('http://localhost:5000/api/magasins'),
-          fetch('http://localhost:5000/api/grades'),
+          fetch(`${API_BASE_URL}/api/exportateurs`),
+          fetch(`${API_BASE_URL}/api/produits`),
+          fetch(`${API_BASE_URL}/api/campagnes`),
+          fetch(`${API_BASE_URL}/api/magasins`),
+          fetch(`${API_BASE_URL}/api/grades`),
         ]);
         const data = await Promise.all(responses.map(r => r.json()));
 
@@ -206,7 +208,7 @@ const NouvelleDemande: React.FC<{ onNavigateBack: () => void }> = ({ onNavigateB
   })),
 };
 
-      const res = await fetch('http://localhost:5000/api/demandes', {
+      const res = await fetch(`${API_BASE_URL}/api/demandes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
