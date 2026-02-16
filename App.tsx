@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import Header from './components/Header';
+import API_BASE_URL from './config';
 import Dashboard from './components/Dashboard';
+import Login from './components/Login';
 import TraitementsDashboard from './components/TraitementsDashboard';
 import DemandesAutorites from './components/DemandesAutorites';
 import NouvelleDemande from './components/NouvelleDemande';
@@ -43,6 +45,23 @@ import ReglementFactures from './components/ReglementFactures';
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState('dashboard');
   const [selectedDemandeId, setSelectedDemandeId] = useState<number | null>(null); // NOUVEAU
+  const [user, setUser] = useState<{ id?: number; nom?: string; login?: string } | null>(null);
+
+  const handleLoginSuccess = async (u: any) => {
+    // enrich user with role label from API
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/fonctions`);
+      const functions = await res.json();
+      const role = functions.find((f: any) => f.id === u.id_fonction);
+      const userWithRole = { ...u, roleLabel: role ? role.nom : undefined };
+      setUser(userWithRole);
+      setCurrentView('dashboard');
+    } catch (e) {
+      // fallback
+      setUser(u);
+      setCurrentView('dashboard');
+    }
+  };
 
   const navigateToDashboard = () => setCurrentView('dashboard');
   const navigateToTraitements = () => setCurrentView('traitements');
@@ -103,6 +122,11 @@ const App: React.FC = () => {
 
 
   const renderContent = () => {
+    if (!user) {
+      // Not authenticated — show login screen
+      return <Login onLoginSuccess={handleLoginSuccess} />;
+    }
+
     switch (currentView) {
       case 'traitements':
         return <TraitementsDashboard 
@@ -244,13 +268,14 @@ const App: React.FC = () => {
                 onNavigateToBaseDeDonnees={navigateToBaseDeDonnees}
                 onNavigateToFacturation={navigateToFacturation}
                 onNavigateToStockages={navigateToStockages}
+                user={user}
               />;
     }
   }
 
   return (
     <div className="min-h-screen bg-slate-100">
-      <Header />
+      {user && <Header user={user} onLogout={() => { setUser(null); setCurrentView('dashboard'); }} />}
       <main>
         {renderContent()}
       </main>

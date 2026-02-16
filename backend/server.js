@@ -48,6 +48,102 @@ app.get('/api/exportateurs', (req, res) => {
   });
 });
 
+  // --- Routes additionnelles pour gestion des utilisateurs et des fonctions ---
+  // Retourne toutes les fonctions
+  app.get('/api/fonctions', (req, res) => {
+    pool.query("SELECT ID_FONCTIONS as id, LIBELLE_FONCTIONS as nom, DESCRIPTION_FONCTIONS as description FROM fonctions ORDER BY ID_FONCTIONS", (err, results) => {
+      if (err) {
+        console.error('Erreur récupération fonctions', err);
+        return res.status(500).json({ error: 'Erreur base de données' });
+      }
+      res.json(results || []);
+    });
+  });
+
+  // Retourne tous les utilisateurs (interface admin)
+  app.get('/api/utilisateurs/all', (req, res) => {
+    pool.query(
+      `SELECT ID_UTILISATEURS as id, NOM_UTILISATEURS as nom, LOGIN_UTILISATEURS as login, CONTACT_UTILISATEURS as contact, ID_FONCTIONS as id_fonction FROM utilisateurs ORDER BY NOM_UTILISATEURS`,
+      (err, results) => {
+        if (err) {
+          console.error('Erreur récupération utilisateurs', err);
+          return res.status(500).json({ error: 'Erreur base de données' });
+        }
+        res.json(results || []);
+      }
+    );
+  });
+
+  // Créer un utilisateur
+  app.post('/api/utilisateurs', (req, res) => {
+    const { nom, login, password, contact, idFonction } = req.body;
+    if (!nom || !login) {
+      return res.status(400).json({ error: 'Le nom et le login sont requis' });
+    }
+
+    pool.query(
+      `INSERT INTO utilisateurs (NOM_UTILISATEURS, LOGIN_UTILISATEURS, PASSWORD_UTILISATEURS, CONTACT_UTILISATEURS, ID_FONCTIONS) VALUES (?, ?, ?, ?, ?)`,
+      [nom, login, password || null, contact || null, idFonction || null],
+      (err, result) => {
+        if (err) {
+          console.error('Erreur création utilisateur', err);
+          return res.status(500).json({ error: 'Impossible de créer l\'utilisateur' });
+        }
+        res.json({ id: result.insertId });
+      }
+    );
+  });
+
+  // Mettre à jour un utilisateur
+  app.put('/api/utilisateurs/:id', (req, res) => {
+    const { id } = req.params;
+    const { nom, login, password, contact, idFonction } = req.body;
+
+    pool.query(
+      `UPDATE utilisateurs SET NOM_UTILISATEURS = ?, LOGIN_UTILISATEURS = ?, PASSWORD_UTILISATEURS = ?, CONTACT_UTILISATEURS = ?, ID_FONCTIONS = ? WHERE ID_UTILISATEURS = ?`,
+      [nom, login, password || null, contact || null, idFonction || null, id],
+      (err, result) => {
+        if (err) {
+          console.error('Erreur mise à jour utilisateur', err);
+          return res.status(500).json({ error: 'Impossible de mettre à jour l\'utilisateur' });
+        }
+        res.json({ updated: result.affectedRows });
+      }
+    );
+  });
+
+  // Supprimer un utilisateur
+  app.delete('/api/utilisateurs/:id', (req, res) => {
+    const { id } = req.params;
+    pool.query('DELETE FROM utilisateurs WHERE ID_UTILISATEURS = ?', [id], (err, result) => {
+      if (err) {
+        console.error('Erreur suppression utilisateur', err);
+        return res.status(500).json({ error: 'Impossible de supprimer l\'utilisateur' });
+      }
+      res.json({ deleted: result.affectedRows });
+    });
+  });
+
+  // Route simple d'authentification
+  app.post('/api/login', (req, res) => {
+    const { login, password } = req.body;
+    if (!login || !password) return res.status(400).json({ error: 'Login et mot de passe requis' });
+
+    pool.query('SELECT ID_UTILISATEURS as id, NOM_UTILISATEURS as nom, LOGIN_UTILISATEURS as login, PASSWORD_UTILISATEURS as password, ID_FONCTIONS as id_fonction FROM utilisateurs WHERE LOGIN_UTILISATEURS = ? LIMIT 1', [login], (err, results) => {
+      if (err) {
+        console.error('Erreur login', err);
+        return res.status(500).json({ error: 'Erreur base de données' });
+      }
+      if (!results || results.length === 0) return res.status(401).json({ error: 'Utilisateur introuvable' });
+      const user = results[0];
+      if ((user.password || '') !== password) return res.status(401).json({ error: 'Mot de passe incorrect' });
+
+      // Ne pas renvoyer le mot de passe
+      delete user.password;
+      res.json(user);
+    });
+  });
+
 app.get('/api/produits', (req, res) => {
   pool.query("SELECT ID_PRODUIT as id, LIBELLE_PRODUIT as nom FROM produits ORDER BY nom", (err, results) => {
     if (err) {

@@ -26,6 +26,7 @@ interface DashboardProps {
   onNavigateToBaseDeDonnees: () => void;
   onNavigateToFacturation: () => void;
   onNavigateToStockages: () => void;
+  user?: { id?: number; nom?: string; login?: string } | null;
 }
 
 const features = [
@@ -85,7 +86,7 @@ const features = [
   },
 ];
 
-const Dashboard: React.FC<DashboardProps> = ({ onNavigateToTraitements, onNavigateToEchantillons, onNavigateToCodification, onNavigateToParametrage, onNavigateToStatistiques, onNavigateToLaboratoires, onNavigateToBaseDeDonnees, onNavigateToFacturation, onNavigateToStockages }) => {
+const Dashboard: React.FC<DashboardProps> = ({ onNavigateToTraitements, onNavigateToEchantillons, onNavigateToCodification, onNavigateToParametrage, onNavigateToStatistiques, onNavigateToLaboratoires, onNavigateToBaseDeDonnees, onNavigateToFacturation, onNavigateToStockages, user }) => {
 
   const handleNavigation = (target?: string) => {
     if (target === 'traitements') {
@@ -109,6 +110,48 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToTraitements, onNaviga
     }
   };
 
+  // Determine allowed features by role label or id
+  const allowedForRole = (roleLabel?: string | null, roleId?: number | null) => {
+    if (!roleLabel && !roleId) return new Set<string>();
+    const allAccess = new Set(['traitements','echantillons','codifications','laboratoires','stockages','facturation','baseDeDonnees','parametrage','statistiques']);
+
+    const label = (roleLabel || '').toLowerCase();
+    if (label.includes('administrat') || label.includes('informaticien') || label.includes('responsable bv')) return allAccess;
+
+    const allowed = new Set<string>();
+    if (label.includes('analys') || label.includes('chef labo')) {
+      allowed.add('laboratoires');
+    }
+    if (label.includes('agent de saisie')) {
+      allowed.add('traitements');
+    }
+    if (label.includes('comptable')) {
+      allowed.add('facturation');
+    }
+    if (label.includes('sondeur')) {
+      allowed.add('echantillons');
+    }
+    if (label.includes('codificateur')) {
+      allowed.add('codifications');
+    }
+
+    // Fallback: check by known function ids (based on DB dump)
+    if (roleId === 1 || roleId === 7) return allAccess; // Administrateur variants
+    if (roleId === 6) return allAccess; // INFORMATICIEN
+    if (roleId === 4) return allAccess; // RESPONSABLE BV (assume id 4)
+    if (roleId === 2 || roleId === 5) { // ANALYSEUR or CHEF LABO
+      return new Set(['laboratoires']);
+    }
+    if (roleId === 3) return new Set(['traitements']); // AGENT DE SAISIE
+    if (roleId === 9) return new Set(['facturation']); // COMPTABLE
+    if (roleId === 10) return new Set(['echantillons']); // SONDEUR
+    if (roleId === 11) return new Set(['codifications']); // CODIFICATEUR
+
+    return allowed;
+  };
+
+  const allowed = allowedForRole((user as any)?.roleLabel || null, (user as any)?.id_fonction || null);
+
   return (
     <div className="container mx-auto p-6 lg:p-10">
       <div className="bg-white rounded-xl shadow-lg p-6 mb-10 text-center border border-gray-200">
@@ -117,18 +160,25 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateToTraitements, onNaviga
           <h2 className="text-3xl font-bold text-gray-800">Tableau de Bord</h2>
         </div>
         <p className="text-gray-500">Bienvenue dans votre espace de traitement des BV</p>
+        {user && (
+          <p className="text-sm text-gray-600 mt-2">Connecté en tant que <strong>{user.nom || user.login}</strong></p>
+        )}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
-        {features.map((feature, index) => (
-          <FeatureCard
-            key={index}
-            icon={feature.icon}
-            title={feature.title}
-            description={feature.description}
-            onClick={feature.navTarget ? () => handleNavigation(feature.navTarget) : undefined}
-          />
-        ))}
+        {features.map((feature, index) => {
+          const isAllowed = allowed.has(feature.navTarget || '');
+          return (
+            <FeatureCard
+              key={index}
+              icon={feature.icon}
+              title={feature.title}
+              description={feature.description}
+              onClick={isAllowed && feature.navTarget ? () => handleNavigation(feature.navTarget) : undefined}
+              disabled={!isAllowed}
+            />
+          );
+        })}
       </div>
     </div>
   );
